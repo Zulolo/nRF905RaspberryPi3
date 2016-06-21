@@ -11,6 +11,7 @@
 #include <stdint.h>
 #include <unistd.h>
 #include <stdio.h>
+#include <errno.h>
 #include <stdlib.h>
 #include <signal.h>
 #include <getopt.h>
@@ -37,20 +38,22 @@
 enum _nRF905PinPosInModeLevel{
 	NRF905_PWR_UP_PIN_POS = 0,
 	NRF905_TRX_CE_PIN_POS,
-	NRF905_TX_EN_PIN_POS
+	NRF905_TX_EN_PIN_POS,
+	NRF905_TX_POS_MAX
 };
 
-static const char NRF905MODE_PIN_LEVEL[][] = {	{GPIO_LEVEL_LOW, GPIO_LEVEL_LOW, GPIO_LEVEL_LOW},
-												{GPIO_LEVEL_HIGH, GPIO_LEVEL_LOW, GPIO_LEVEL_LOW},
-												{GPIO_LEVEL_HIGH, GPIO_LEVEL_LOW, GPIO_LEVEL_LOW},
-												{GPIO_LEVEL_HIGH, GPIO_LEVEL_HIGH, GPIO_LEVEL_LOW},
-												{GPIO_LEVEL_HIGH, GPIO_LEVEL_HIGH, GPIO_LEVEL_HIGH}};
+static const uint8_t unNRF905MODE_PIN_LEVEL[][NRF905_TX_POS_MAX] = {{GPIO_LEVEL_LOW, GPIO_LEVEL_LOW, GPIO_LEVEL_LOW},
+													{GPIO_LEVEL_HIGH, GPIO_LEVEL_LOW, GPIO_LEVEL_LOW},
+													{GPIO_LEVEL_HIGH, GPIO_LEVEL_LOW, GPIO_LEVEL_LOW},
+													{GPIO_LEVEL_HIGH, GPIO_LEVEL_HIGH, GPIO_LEVEL_LOW},
+													{GPIO_LEVEL_HIGH, GPIO_LEVEL_HIGH, GPIO_LEVEL_HIGH}};
 static const char nRF905SPI_Device[] = "/dev/spidev0.0";
 static uint8_t unSPI_Mode = SPI_MODE_0;
 static uint8_t unSPI_Bits = 8;
 static uint32_t unSPI_Speed = 500000;
 static uint16_t unSPI_Delay = 1000;
 static uint8_t unNeedtoClose = 0;
+static nRF905Mode_t tNRF905ModeGlobal;
 
 void sighandler(int32_t signum, siginfo_t *info, void *ptr)
 {
@@ -184,6 +187,7 @@ int32_t nInitGPIO(void)
 		NRF905D_LOG_ERR("Config GPIO pin failed.");
 		return (-1);
 	}
+	usleep(1000);
 	return 0;
 }
 
@@ -234,7 +238,7 @@ static int32_t GPIOWrite(int32_t pin, int32_t value)
 	return(0);
 }
 
-int32_t nRF905SetMode(nRF905Modes_t tNRF905Mode)
+int32_t setNRF905Mode(nRF905Mode_t tNRF905Mode)
 {
 	if (tNRF905Mode >= NRF905_MODE_MAX)
 	{
@@ -242,25 +246,26 @@ int32_t nRF905SetMode(nRF905Modes_t tNRF905Mode)
 		return (-1);
 	}
 
-	if (-1 == GPIOWrite(NRF905_TX_EN_PIN, NRF905MODE_PIN_LEVEL[tNRF905Mode][NRF905_TX_EN_PIN_POS])){
+	if (-1 == GPIOWrite(NRF905_TX_EN_PIN, unNRF905MODE_PIN_LEVEL[tNRF905Mode][NRF905_TX_EN_PIN_POS])){
 		NRF905D_LOG_ERR("Write GPIO pin %u failed.", NRF905_TX_EN_PIN);
 		return (-1);
 	}
 
-	if (-1 == GPIOWrite(NRF905_TRX_CE_PIN, NRF905MODE_PIN_LEVEL[tNRF905Mode][NRF905_TRX_CE_PIN_POS])){
+	if (-1 == GPIOWrite(NRF905_TRX_CE_PIN, unNRF905MODE_PIN_LEVEL[tNRF905Mode][NRF905_TRX_CE_PIN_POS])){
 		NRF905D_LOG_ERR("Write GPIO pin %u failed.", NRF905_TRX_CE_PIN);
 		return (-1);
 	}
 
-	if (-1 == GPIOWrite(NRF905_PWR_UP_PIN, NRF905MODE_PIN_LEVEL[tNRF905Mode][NRF905_PWR_UP_PIN_POS])){
+	if (-1 == GPIOWrite(NRF905_PWR_UP_PIN, unNRF905MODE_PIN_LEVEL[tNRF905Mode][NRF905_PWR_UP_PIN_POS])){
 		NRF905D_LOG_ERR("Write GPIO pin %u failed.", NRF905_PWR_UP_PIN);
 		return (-1);
 	}
-
+	tNRF905ModeGlobal = tNRF905Mode;
+	usleep(1000);
 	return 0;
 }
 
-int32_t nRF905Initial(int32_t nRF905SPIfd)
+int32_t nRF905SpiInitial(int32_t nRF905SPIfd)
 {
 	/*
 	 * spi mode
@@ -304,16 +309,64 @@ int32_t nRF905Initial(int32_t nRF905SPIfd)
 	return 0;
 }
 
+int32_t nNRF905ExecuteTask(nRF905CommTask_t tNRF905CommTask, uint8_t* pCommPayload)
+{
+	return 0;
+}
+
+typedef struct _NRF905CommThreadPara{
+	int32_t nTaskReadPipe;
+	int32_t nRF905SPI_Fd;
+}nRF905CommThreadPara_t;
+
+void* pNRF905Comm(void *ptr)
+{
+	nRF905CommTask_t tNRF905CommTask;
+	nRF905CommThreadPara_t tNRF905CommThreadPara = *((nRF905CommThreadPara_t)ptr);
+	uint8_t* pCommPayload;
+
+	while (unNeedtoClose == 0){
+		if (read(tNRF905CommThreadPara.nTaskReadPipe, &tNRF905CommTask, sizeof(nRF905CommTask_t)) > 0){
+			if (tNRF905CommTask.unCommByteNum > 0){
+				pCommPayload = malloc(tNRF905CommTask.unCommByteNum);
+				if (NULL == pCommPayload){
+					NRF905D_LOG_ERR("WTF malloc fail??");
+				}else{
+					if (read(tNRF905CommThreadPara.nTaskReadPipe, pCommPayload, tNRF905CommTask.unCommByteNum) > 0){
+						nNRF905ExecuteTask(tNRF905CommThreadPara.nRF905SPI_Fd, tNRF905CommTask, pCommPayload);
+					}else{
+						NRF905D_LOG_ERR("Read task communication payload from pipe error with code:%d", errno);
+					}
+					free(pCommPayload);
+				}
+			}
+		}else{
+			NRF905D_LOG_ERR("Read task communication type from pipe error with code:%d", errno);
+		}
+
+	}
+	pthread_exit(0);
+}
+
+void* pRoutineWork(void *ptr)
+{
+
+	pthread_exit(0);
+}
+
 int32_t main(void) {
+	int32_t nRF905SPI_Fd;
+	nRF905CommThreadPara_t tNRF905CommThreadPara;
+	int32_t nRet;
+	struct sigaction tSignalAction;
+	pthread_t tRoutineThread, tNRF905CommThread;
+	int32_t nTaskExecPipe[2];
+	int32_t nRetrieveDataRead, nRetrieveDataWrite;
 
-	int32_t nRet = 0;
-	int32_t nRF905SPIfd;
-	struct sigaction act;
+    tSignalAction.sa_sigaction = sighandler;
+    tSignalAction.sa_flags = SA_SIGINFO;
 
-    act.sa_sigaction = sighandler;
-    act.sa_flags = SA_SIGINFO;
-
-    sigaction(SIGTERM, &act, NULL);
+    sigaction(SIGTERM, &tSignalAction, NULL);
 
 	puts("!!!nRF905 Daemon start!!!"); /* prints !!!nRF905 Daemon start!!! */
 
@@ -321,36 +374,63 @@ int32_t main(void) {
 
 	nInitGPIO();
 
-	usleep(1000);
-
-	if (nRF905SetMode(NRF905_MODE_PWR_DOWN) < 0)
+	if (setNRF905Mode(NRF905_MODE_PWR_DOWN) < 0)
 	{
 		return nDisableGPIO();
 	}
 
-	usleep(1000);
-
-	nRF905SPIfd = open(nRF905SPI_Device, O_RDWR);
-	if (nRF905SPIfd < 0) {
+	nRF905SPI_Fd = open(nRF905SPI_Device, O_RDWR);
+	if (nRF905SPI_Fd < 0) {
 		NRF905D_LOG_ERR("Can't open device %s.", nRF905SPI_Device);
 		return nDisableGPIO();
 	}
 
-	if (nRF905Initial(nRF905SPIfd) < 0)
+	if (nRF905SpiInitial(nRF905SPI_Fd) < 0)
 	{
-		close(nRF905SPIfd);
+		close(nRF905SPI_Fd);
+		return nDisableGPIO();
+	}
+
+	// Prepare the pipe
+	nRet = pipe(nTaskExecPipe);
+	if(nRet < 0)
+	{
+		NRF905D_LOG_ERR("Open task execution pipe failed with error:%d.", nRet);
+		close(nRF905SPI_Fd);
+		return nDisableGPIO();
+	}
+
+	// Start little birds
+	nRet = pthread_create(&tNRF905CommThread, NULL, pNRF905Comm, nTaskExecPipe);
+	if(nRet < 0)
+	{
+		NRF905D_LOG_ERR("Start nRF905 communication thread failed with error:%d.", nRet);
+		close(nRF905SPI_Fd);
+		return nDisableGPIO();
+	}
+
+	tNRF905CommThreadPara.nRF905SPI_Fd = nRF905SPI_Fd;
+	tNRF905CommThreadPara.nTaskReadPipe = nTaskExecPipe[0];
+	nRet = pthread_create(&tRoutineThread, NULL, pRoutineWork, &tNRF905CommThreadPara);
+	if(nRet < 0)
+	{
+		NRF905D_LOG_ERR("Start routine thread failed with error:%d.", nRet);
+		close(nRF905SPI_Fd);
 		return nDisableGPIO();
 	}
 
 	while (unNeedtoClose == 0){
-		if (nReadRF_CR(nRF905SPIfd) < 0){
-			close(nRF905SPIfd);
+		if (nReadRF_CR(nRF905SPI_Fd) < 0){
+			close(nRF905SPI_Fd);
 			return nDisableGPIO();
 		}
 		usleep(500000);
 	}
 	NRF905D_LOG_INFO("INT signal was received, exit.");
 
-	close(nRF905SPIfd);
+	pthread_join(tNRF905CommThread, NULL);
+	pthread_join(tRoutineThread, NULL);
+
+	close(nRF905SPI_Fd);
 	return nDisableGPIO();
 }

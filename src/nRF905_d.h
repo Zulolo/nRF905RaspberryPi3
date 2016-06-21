@@ -25,6 +25,18 @@ typedef enum _nRF905Modes {
 	NRF905_MODE_BURST_RX,
 	NRF905_MODE_BURST_TX,
 	NRF905_MODE_MAX
-}nRF905Modes_t;
+}nRF905Mode_t;
+
+typedef enum _nRF905CommType {
+	NRF905_COMM_TYPE_RX_PKG = 0,
+	NRF905_COMM_TYPE_TX_PKG,
+	NRF905_COMM_TYPE_WR_CFG,
+	NRF905_COMM_TYPE_RD_CFG
+}nRF905CommType_t;
+
+typedef struct _CommTask {
+	nRF905CommType_t tCommType;
+	uint8_t unCommByteNum;
+}nRF905CommTask_t;
 
 #endif /* NRF905_D_H_ */
