@@ -14,6 +14,7 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <signal.h>
+#include <pthread.h>
 #include <getopt.h>
 #include <fcntl.h>
 #include <sys/ioctl.h>
@@ -23,17 +24,19 @@
 #include <linux/spi/spidev.h>
 #include "nRF905_d.h"
 
-#define GPIO_INPUT  0
-#define GPIO_OUTPUT 1
+#define GPIO_INPUT  						0
+#define GPIO_OUTPUT 						1
 
-#define GPIO_LEVEL_LOW  		0
-#define GPIO_LEVEL_HIGH 		1
+#define GPIO_LEVEL_LOW  					0
+#define GPIO_LEVEL_HIGH 					1
 
-#define NRF905_TX_EN_PIN		17
-#define NRF905_TRX_CE_PIN		18
-#define NRF905_PWR_UP_PIN		27
-
-#define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
+#define NRF905_TX_EN_PIN					17
+#define NRF905_TRX_CE_PIN					18
+#define NRF905_PWR_UP_PIN					27
+#define NRF905_DATA_FIFO_FOLDER_PATH		"/var/tmp/"
+#define NRF905_DATA_FIFO_C_WR_PATH			NRF905_DATA_FIFO_FOLDER_PATH "data_fifo_c_wr_php_rd"
+#define NRF905_DATA_FIFO_C_RD_PATH			NRF905_DATA_FIFO_FOLDER_PATH "data_fifo_c_rd_php_wr"
+#define ARRAY_SIZE(a) 						(sizeof(a) / sizeof((a)[0]))
 
 enum _nRF905PinPosInModeLevel{
 	NRF905_PWR_UP_PIN_POS = 0,
@@ -59,15 +62,11 @@ void sighandler(int32_t signum, siginfo_t *info, void *ptr)
 {
 	unNeedtoClose = 1;
 }
-
-static int32_t nReadRF_CR(int32_t nRF905SPIfd)
+#define NRF905_CR_DEFAULT		{0x10, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
+static int32_t nRF905CR_Initial(int32_t nRF905SPIfd)
 {
 	int32_t nRet;
-	uint8_t unTx[] = {
-		0x10,
-		0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-		0xFF, 0xFF, 0xFF, 0xFF, 0xFF
-	};
+	uint8_t unTx[] = NRF905_CR_DEFAULT;
 	uint8_t unRx[ARRAY_SIZE(unTx)] = {0, };
 	struct spi_ioc_transfer tSPI_Transfer = {
 		.tx_buf = (unsigned long)unTx,
@@ -83,13 +82,6 @@ static int32_t nReadRF_CR(int32_t nRF905SPIfd)
 		NRF905D_LOG_ERR("can't send spi message");
 		return -1;
 	}
-
-	for (nRet = 0; nRet < ARRAY_SIZE(unTx); nRet++) {
-		if (!(nRet % 6))
-			puts("");
-		printf("%.2X ", unRx[nRet]);
-	}
-	puts("");
 	return 0;
 }
 
@@ -309,7 +301,7 @@ int32_t nRF905SpiInitial(int32_t nRF905SPIfd)
 	return 0;
 }
 
-int32_t nNRF905ExecuteTask(nRF905CommTask_t tNRF905CommTask, uint8_t* pCommPayload)
+int32_t nNRF905ExecuteTask(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905CommTask, uint8_t* pCommPayload)
 {
 	return 0;
 }
@@ -322,7 +314,7 @@ typedef struct _NRF905CommThreadPara{
 void* pNRF905Comm(void *ptr)
 {
 	nRF905CommTask_t tNRF905CommTask;
-	nRF905CommThreadPara_t tNRF905CommThreadPara = *((nRF905CommThreadPara_t)ptr);
+	nRF905CommThreadPara_t tNRF905CommThreadPara = *((nRF905CommThreadPara_t *)ptr);
 	uint8_t* pCommPayload;
 
 	while (unNeedtoClose == 0){
@@ -361,7 +353,7 @@ int32_t main(void) {
 	struct sigaction tSignalAction;
 	pthread_t tRoutineThread, tNRF905CommThread;
 	int32_t nTaskExecPipe[2];
-	int32_t nRetrieveDataRead, nRetrieveDataWrite;
+	int32_t nNRF905DataFIFO_C_Read, nNRF905DataFIFO_C_Write;
 
     tSignalAction.sa_sigaction = sighandler;
     tSignalAction.sa_flags = SA_SIGINFO;
@@ -374,8 +366,7 @@ int32_t main(void) {
 
 	nInitGPIO();
 
-	if (setNRF905Mode(NRF905_MODE_PWR_DOWN) < 0)
-	{
+	if (setNRF905Mode(NRF905_MODE_PWR_DOWN) < 0){
 		return nDisableGPIO();
 	}
 
@@ -385,16 +376,18 @@ int32_t main(void) {
 		return nDisableGPIO();
 	}
 
-	if (nRF905SpiInitial(nRF905SPI_Fd) < 0)
-	{
+	if (nRF905SpiInitial(nRF905SPI_Fd) < 0){
 		close(nRF905SPI_Fd);
 		return nDisableGPIO();
 	}
 
+	if (nRF905CR_Initial(nRF905SPI_Fd) < 0){
+
+	}
+
 	// Prepare the pipe
 	nRet = pipe(nTaskExecPipe);
-	if(nRet < 0)
-	{
+	if(nRet < 0){
 		NRF905D_LOG_ERR("Open task execution pipe failed with error:%d.", nRet);
 		close(nRF905SPI_Fd);
 		return nDisableGPIO();
@@ -402,8 +395,7 @@ int32_t main(void) {
 
 	// Start little birds
 	nRet = pthread_create(&tNRF905CommThread, NULL, pNRF905Comm, nTaskExecPipe);
-	if(nRet < 0)
-	{
+	if(nRet < 0){
 		NRF905D_LOG_ERR("Start nRF905 communication thread failed with error:%d.", nRet);
 		close(nRF905SPI_Fd);
 		return nDisableGPIO();
@@ -412,18 +404,50 @@ int32_t main(void) {
 	tNRF905CommThreadPara.nRF905SPI_Fd = nRF905SPI_Fd;
 	tNRF905CommThreadPara.nTaskReadPipe = nTaskExecPipe[0];
 	nRet = pthread_create(&tRoutineThread, NULL, pRoutineWork, &tNRF905CommThreadPara);
-	if(nRet < 0)
-	{
+	if(nRet < 0){
 		NRF905D_LOG_ERR("Start routine thread failed with error:%d.", nRet);
 		close(nRF905SPI_Fd);
 		return nDisableGPIO();
 	}
 
+	unlink(NRF905_DATA_FIFO_C_WR_PATH);
+	unlink(NRF905_DATA_FIFO_C_RD_PATH);
+	nRet = mkfifo(NRF905_DATA_FIFO_C_WR_PATH, S_IRUSR| S_IWUSR);
+	if (nRet < 0) {
+		NRF905D_LOG_ERR("mkfifo failed with error:%d.", errno);
+		close(nRF905SPI_Fd);
+		return nDisableGPIO();
+	}
+
+	nRet = mkfifo(NRF905_DATA_FIFO_C_RD_PATH, S_IRUSR| S_IWUSR);
+	if (nRet < 0) {
+		NRF905D_LOG_ERR("mkfifo failed with error:%d.", errno);
+		close(nRF905SPI_Fd);
+		unlink(NRF905_DATA_FIFO_C_WR_PATH);
+		return nDisableGPIO();
+	}
+
+	// in PHP NRF905_DATA_FIFO_C_RD_PATH should also be opened first
+	nNRF905DataFIFO_C_Read = open(NRF905_DATA_FIFO_C_RD_PATH, O_RDONLY);
+	if (nNRF905DataFIFO_C_Read < 0){
+		NRF905D_LOG_ERR("Open FIFO read pipe with error:%d.", errno);
+		close(nRF905SPI_Fd);
+		unlink(NRF905_DATA_FIFO_C_WR_PATH);
+		unlink(NRF905_DATA_FIFO_C_RD_PATH);
+		return nDisableGPIO();
+	}
+
+	nNRF905DataFIFO_C_Write = open(NRF905_DATA_FIFO_C_WR_PATH, O_WRONLY);
+	if (nNRF905DataFIFO_C_Write < 0){
+		NRF905D_LOG_ERR("Open FIFO write pipe with error:%d.", errno);
+		close(nRF905SPI_Fd);
+		unlink(NRF905_DATA_FIFO_C_WR_PATH);
+		unlink(NRF905_DATA_FIFO_C_RD_PATH);
+		return nDisableGPIO();
+	}
+
+	// If no one open the other side of the two FIFO, and also no INT, here will never reach
 	while (unNeedtoClose == 0){
-		if (nReadRF_CR(nRF905SPI_Fd) < 0){
-			close(nRF905SPI_Fd);
-			return nDisableGPIO();
-		}
 		usleep(500000);
 	}
 	NRF905D_LOG_INFO("INT signal was received, exit.");
@@ -431,6 +455,8 @@ int32_t main(void) {
 	pthread_join(tNRF905CommThread, NULL);
 	pthread_join(tRoutineThread, NULL);
 
+	unlink(NRF905_DATA_FIFO_C_WR_PATH);
+	unlink(NRF905_DATA_FIFO_C_RD_PATH);
 	close(nRF905SPI_Fd);
 	return nDisableGPIO();
 }
