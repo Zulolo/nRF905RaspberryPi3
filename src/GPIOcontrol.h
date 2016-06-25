@@ -12,7 +12,6 @@
 #define GPIO_LEVEL_HIGH 					1
 
 
-
 int32_t GPIORead(int32_t pin);
 int32_t GPIOWrite(int32_t pin, int32_t value);
 int32_t nInitNRF905GPIO(void);

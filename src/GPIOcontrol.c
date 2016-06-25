@@ -10,6 +10,7 @@
 #include <sys/types.h>
 #include <linux/types.h>
 #include <linux/spi/spidev.h>
+
 #include "GPIOcontrol.h"
 #include "nRF905_d.h"
 
@@ -59,7 +60,8 @@ int32_t nDisableSPI_GPIO(void)
 	 * Disable GPIO pins
 	 */
 	if ((-1 == GPIOUnexport(NRF905_TX_EN_PIN)) || (-1 == GPIOUnexport(NRF905_TRX_CE_PIN)) ||
-			(-1 == GPIOUnexport(NRF905_PWR_UP_PIN))){
+			(-1 == GPIOUnexport(NRF905_PWR_UP_PIN)) || (-1 == GPIOExport(NRF905_CD_PIN)) ||
+			(-1 == GPIOExport(NRF905_AM_PIN)) || (-1 == GPIOExport(NRF905_DR_PIN))){
 		NRF905D_LOG_ERR("GPIO pin disable failed.");
 		return (-1);
 	}
@@ -72,7 +74,8 @@ static int32_t nEnableSPI_GPIO(void)
 	 * Enable GPIO pins
 	 */
 	if ((-1 == GPIOExport(NRF905_TX_EN_PIN)) || (-1 == GPIOExport(NRF905_TRX_CE_PIN)) ||
-			(-1 == GPIOExport(NRF905_PWR_UP_PIN))){
+			(-1 == GPIOExport(NRF905_PWR_UP_PIN)) || (-1 == GPIOExport(NRF905_CD_PIN)) ||
+			(-1 == GPIOExport(NRF905_AM_PIN)) || (-1 == GPIOExport(NRF905_DR_PIN))){
 		NRF905D_LOG_ERR("GPIO pin enable failed.");
 		return (-1);
 	}
@@ -116,7 +119,13 @@ int32_t nInitNRF905GPIO(void)
 	 */
 	if ((-1 == GPIODirection(NRF905_TX_EN_PIN, GPIO_OUTPUT)) || (-1 == GPIODirection(NRF905_TRX_CE_PIN, GPIO_OUTPUT)) ||
 			(-1 == GPIODirection(NRF905_PWR_UP_PIN, GPIO_OUTPUT))){
-		NRF905D_LOG_ERR("Config GPIO pin failed.");
+		NRF905D_LOG_ERR("Config GPIO output pin failed.");
+		return (-1);
+	}
+
+	if ((-1 == GPIODirection(NRF905_CD_PIN, GPIO_INPUT)) || (-1 == GPIODirection(NRF905_AM_PIN, GPIO_INPUT)) ||
+			(-1 == GPIODirection(NRF905_DR_PIN, GPIO_INPUT))){
+		NRF905D_LOG_ERR("Config GPIO output pin failed.");
 		return (-1);
 	}
 	usleep(1000);
