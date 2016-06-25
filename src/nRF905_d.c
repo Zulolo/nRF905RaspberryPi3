@@ -11,6 +11,7 @@
 #include <stdint.h>
 #include <unistd.h>
 #include <stdio.h>
+#include <string.h>
 #include <errno.h>
 #include <stdlib.h>
 #include <signal.h>
@@ -23,16 +24,8 @@
 #include <linux/types.h>
 #include <linux/spi/spidev.h>
 #include "nRF905_d.h"
+#include "GPIOcontrol.h"
 
-#define GPIO_INPUT  						0
-#define GPIO_OUTPUT 						1
-
-#define GPIO_LEVEL_LOW  					0
-#define GPIO_LEVEL_HIGH 					1
-
-#define NRF905_TX_EN_PIN					17
-#define NRF905_TRX_CE_PIN					18
-#define NRF905_PWR_UP_PIN					27
 #define NRF905_DATA_FIFO_FOLDER_PATH		"/var/tmp/"
 #define NRF905_DATA_FIFO_C_WR_PATH			NRF905_DATA_FIFO_FOLDER_PATH "data_fifo_c_wr_php_rd"
 #define NRF905_DATA_FIFO_C_RD_PATH			NRF905_DATA_FIFO_FOLDER_PATH "data_fifo_c_rd_php_wr"
@@ -47,20 +40,31 @@
  * So address length is 4 bytes)
  *
  */
-#define NRF905_CR_DEFAULT		{0x6C, \
-	0x0A, \
-	0x44, \
-	0x10, \
-	0x10, \
-	0x51, \
-	0xA6, \
-	0x93, \
-	0x37, \
-	0x0F}		// F=(422.4+(0x6C<<1)/10)*2; No retransmission; +6db; NOT reduce receive power
-// 4 bytes RX & TX address; 16 bytes RX & TX package length; RX address is the CRC32 of CH_NO
-// 16MHz crystal; enable CRC; CRC16
+#define NRF905_CMD_WC_MASK						0x0F
+#define NRF905_CMD_WC(unWR_CFG_ByteIndex)		((unWR_CFG_ByteIndex) & NRF905_CMD_WC_MASK)
+#define NRF905_CMD_RC_MASK						0x0F
+#define NRF905_CMD_RC(unRD_CFG_ByteIndex)		(((unRD_CFG_ByteIndex) & NRF905_CMD_RC_MASK) | 0x10)
+#define NRF905_CMD_WTP							0x20
+#define NRF905_CMD_RTP							0x21
+#define NRF905_CMD_WTA							0x22
+#define NRF905_CMD_RTA							0x23
+#define NRF905_CMD_RRP							0x24
 
-static const uint16_t unRF_HOPPING_TABLE[] = {0x8A17, 0x8A83};
+// MSB of CH_NO will always be 0
+static const uint8_t NRF905_CR_DEFAULT[] =	{0x4C, 0x08,		// F=(422.4+(0x6C<<1)/10)*1; No retransmission; +6db; NOT reduce receive power
+	0x44,	// 4 bytes RX & TX address;
+	0x10,
+	0x10, 	// 16 bytes RX & TX package length;
+	0x13,
+	0xEB,
+	0x8A,
+	0x01,	// RX address is the CRC32 of CH_NO
+	0x0F};	// 16MHz crystal; enable CRC; CRC16
+
+static const uint16_t unRF_HOPPING_TABLE[] = {	0x884C, 0x883A, 0x8846, 0x8832, 0x884A, 0x8835,
+												0x884B, 0x8837, 0x884F, 0x883E, 0x8847, 0x8838,
+												0x8844, 0x8834, 0x8843, 0x8834, 0x884B, 0x8839,
+												0x884D, 0x883A, 0x884E, 0x883C, 0x8832, 0x883F};
 
 enum _nRF905PinPosInModeLevel{
 	NRF905_PWR_UP_PIN_POS = 0,
@@ -70,10 +74,10 @@ enum _nRF905PinPosInModeLevel{
 };
 
 static const uint8_t unNRF905MODE_PIN_LEVEL[][NRF905_TX_POS_MAX] = {{GPIO_LEVEL_LOW, GPIO_LEVEL_LOW, GPIO_LEVEL_LOW},
-													{GPIO_LEVEL_HIGH, GPIO_LEVEL_LOW, GPIO_LEVEL_LOW},
-													{GPIO_LEVEL_HIGH, GPIO_LEVEL_LOW, GPIO_LEVEL_LOW},
-													{GPIO_LEVEL_HIGH, GPIO_LEVEL_HIGH, GPIO_LEVEL_LOW},
-													{GPIO_LEVEL_HIGH, GPIO_LEVEL_HIGH, GPIO_LEVEL_HIGH}};
+																	{GPIO_LEVEL_HIGH, GPIO_LEVEL_LOW, GPIO_LEVEL_LOW},
+																	{GPIO_LEVEL_HIGH, GPIO_LEVEL_LOW, GPIO_LEVEL_LOW},
+																	{GPIO_LEVEL_HIGH, GPIO_LEVEL_HIGH, GPIO_LEVEL_LOW},
+																	{GPIO_LEVEL_HIGH, GPIO_LEVEL_HIGH, GPIO_LEVEL_HIGH}};
 static const char nRF905SPI_Device[] = "/dev/spidev0.0";
 static uint8_t unSPI_Mode = SPI_MODE_0;
 static uint8_t unSPI_Bits = 8;
@@ -86,172 +90,30 @@ void sighandler(int32_t signum, siginfo_t *info, void *ptr)
 	unNeedtoClose = 1;
 }
 
-
-static int32_t nRF905CR_Initial(int32_t nRF905SPIfd)
+static int32_t nRF905TX(int32_t nRF905SPIfd, uint8_t* pTX_Frame, uint8_t unFrameLength)
 {
-	int32_t nRet;
-	uint8_t unTx[] = NRF905_CR_DEFAULT;
-	uint8_t unRx[ARRAY_SIZE(unTx)] = {0, };
-	struct spi_ioc_transfer tSPI_Transfer = {
-		.tx_buf = (unsigned long)unTx,
-		.rx_buf = (unsigned long)unRx,
-		.len = ARRAY_SIZE(unTx),
-		.delay_usecs = unSPI_Delay,
-		.speed_hz = unSPI_Speed,
-		.bits_per_word = unSPI_Bits,
-	};
+	uint8_t* pRX_Frame;
+	struct spi_ioc_transfer tSPI_Transfer;
 
-	nRet = ioctl(nRF905SPIfd, SPI_IOC_MESSAGE(1), &tSPI_Transfer);
-	if (nRet < 1){
+	pRX_Frame = malloc(unFrameLength + 1);
+	if (NULL == pRX_Frame){
+		NRF905D_LOG_ERR("nRF905TX failed because of no RAM.");
+		return (-1);
+	}
+	tSPI_Transfer.tx_buf = (unsigned long)pTX_Frame;
+	tSPI_Transfer.rx_buf = (unsigned long)pRX_Frame;
+	tSPI_Transfer.len = unFrameLength;
+	tSPI_Transfer.delay_usecs = unSPI_Delay;
+	tSPI_Transfer.speed_hz = unSPI_Speed;
+	tSPI_Transfer.bits_per_word = unSPI_Bits;
+
+	if (ioctl(nRF905SPIfd, SPI_IOC_MESSAGE(1), &tSPI_Transfer) < 1){
+		free(pRX_Frame);
 		NRF905D_LOG_ERR("can't send spi message");
 		return -1;
 	}
+	free(pRX_Frame);
 	return 0;
-}
-
-static int32_t GPIOExport(int32_t pin)
-{
-#define BUFFER_MAX 3
-	char buffer[BUFFER_MAX];
-	ssize_t bytes_written;
-	int32_t fd;
-
-	fd = open("/sys/class/gpio/export", O_WRONLY);
-	if (-1 == fd) {
-		fprintf(stderr, "Failed to open export for writing!\n");
-		return(-1);
-	}
-
-	bytes_written = snprintf(buffer, BUFFER_MAX, "%d", pin);
-	write(fd, buffer, bytes_written);
-	close(fd);
-	return(0);
-}
-
-static int32_t GPIOUnexport(int32_t pin)
-{
-	char buffer[BUFFER_MAX];
-	ssize_t bytes_written;
-	int32_t fd;
-
-	fd = open("/sys/class/gpio/unexport", O_WRONLY);
-	if (-1 == fd) {
-		fprintf(stderr, "Failed to open unexport for writing!\n");
-		return(-1);
-	}
-
-	bytes_written = snprintf(buffer, BUFFER_MAX, "%d", pin);
-	write(fd, buffer, bytes_written);
-	close(fd);
-	return(0);
-}
-
-int32_t nDisableGPIO(void)
-{
-	/*
-	 * Disable GPIO pins
-	 */
-	if ((-1 == GPIOUnexport(NRF905_TX_EN_PIN)) || (-1 == GPIOUnexport(NRF905_TRX_CE_PIN)) ||
-			(-1 == GPIOUnexport(NRF905_PWR_UP_PIN))){
-		NRF905D_LOG_ERR("GPIO pin disable failed.");
-		return (-1);
-	}
-	return 0;
-}
-
-static int32_t GPIODirection(int32_t pin, int32_t dir)
-{
-	static const char s_directions_str[]  = "in\0out";
-
-#define DIRECTION_MAX 35
-	char path[DIRECTION_MAX];
-	int32_t fd;
-
-	snprintf(path, DIRECTION_MAX, "/sys/class/gpio/gpio%d/direction", pin);
-	fd = open(path, O_WRONLY);
-	if (-1 == fd) {
-		printf("Failed to open pin %d direction for writing!\n", pin);
-		fprintf(stderr, "Failed to open gpio direction for writing!\n");
-		return(-1);
-	}
-
-	if (-1 == write(fd, &s_directions_str[GPIO_INPUT == dir ? 0 : 3], GPIO_INPUT == dir ? 2 : 3)) {
-		fprintf(stderr, "Failed to set direction!\n");
-		return(-1);
-	}
-
-	close(fd);
-	return(0);
-}
-
-int32_t nInitGPIO(void)
-{
-	/*
-	 * Enable GPIO pins
-	 */
-	if ((-1 == GPIOExport(NRF905_TX_EN_PIN)) || (-1 == GPIOExport(NRF905_TRX_CE_PIN)) ||
-			(-1 == GPIOExport(NRF905_PWR_UP_PIN))){
-		NRF905D_LOG_ERR("GPIO pin enable failed.");
-		return (-1);
-	}
-	usleep(100000);
-	/*
-	 * Set GPIO directions
-	 */
-	if ((-1 == GPIODirection(NRF905_TX_EN_PIN, GPIO_OUTPUT)) || (-1 == GPIODirection(NRF905_TRX_CE_PIN, GPIO_OUTPUT)) ||
-			(-1 == GPIODirection(NRF905_PWR_UP_PIN, GPIO_OUTPUT))){
-		NRF905D_LOG_ERR("Config GPIO pin failed.");
-		return (-1);
-	}
-	usleep(1000);
-	return 0;
-}
-
-static int32_t GPIORead(int32_t pin)
-{
-#define VALUE_MAX 30
-	char path[VALUE_MAX];
-	char value_str[3];
-	int32_t fd;
-
-	snprintf(path, VALUE_MAX, "/sys/class/gpio/gpio%d/value", pin);
-	fd = open(path, O_RDONLY);
-	if (-1 == fd) {
-		fprintf(stderr, "Failed to open gpio value for reading!\n");
-		return (-1);
-	}
-
-	if (-1 == read(fd, value_str, 3)) {
-		fprintf(stderr, "Failed to read value!\n");
-		return (-1);
-	}
-
-	close(fd);
-
-	return(atoi(value_str));
-}
-
-static int32_t GPIOWrite(int32_t pin, int32_t value)
-{
-	static const char s_values_str[] = "01";
-
-	char path[VALUE_MAX];
-	int32_t fd;
-
-	snprintf(path, VALUE_MAX, "/sys/class/gpio/gpio%d/value", pin);
-	fd = open(path, O_WRONLY);
-	if (-1 == fd) {
-		fprintf(stderr, "Failed to open gpio value for writing!\n");
-		return (-1);
-	}
-
-	if (1 != write(fd, &s_values_str[GPIO_LEVEL_LOW == value ? 0 : 1], 1)) {
-		fprintf(stderr, "Failed to write value!\n");
-		return (-1);
-	}
-
-	close(fd);
-	return(0);
 }
 
 int32_t setNRF905Mode(nRF905Mode_t tNRF905Mode)
@@ -277,6 +139,71 @@ int32_t setNRF905Mode(nRF905Mode_t tNRF905Mode)
 		return (-1);
 	}
 	usleep(1000);
+	return 0;
+}
+
+static int32_t nRF905RX(int32_t nRF905SPIfd, uint8_t* pTX_Frame, uint8_t* pRX_Frame, uint8_t unFrameLength)
+{
+	struct spi_ioc_transfer tSPI_Transfer;
+
+	tSPI_Transfer.tx_buf = (unsigned long)pTX_Frame;
+	tSPI_Transfer.rx_buf = (unsigned long)pRX_Frame;
+	tSPI_Transfer.len = unFrameLength;
+	tSPI_Transfer.delay_usecs = unSPI_Delay;
+	tSPI_Transfer.speed_hz = unSPI_Speed;
+	tSPI_Transfer.bits_per_word = unSPI_Bits;
+
+	if (ioctl(nRF905SPIfd, SPI_IOC_MESSAGE(1), &tSPI_Transfer) < 1){
+		NRF905D_LOG_ERR("can't send spi message");
+		return -1;
+	}
+	return 0;
+}
+
+static int32_t nRF905CR_Initial(int32_t nRF905SPIfd)
+{
+	uint8_t* pTXwCMD;
+	uint8_t* pRXwStatus;
+
+	if (setNRF905Mode(NRF905_MODE_STD_BY) < 0){
+		NRF905D_LOG_ERR("Set nRF905 mode %d failed.", NRF905_MODE_PWR_DOWN);
+		return (-1);
+	}
+
+	pTXwCMD = malloc(ARRAY_SIZE(NRF905_CR_DEFAULT) + 1);
+	if (NULL == pTXwCMD){
+		NRF905D_LOG_ERR("nRF905CR_Initial failed because of no TX RAM.");
+		return (-1);
+	}
+	pTXwCMD[0] = NRF905_CMD_WC(0);
+	memcpy(pTXwCMD + 1, NRF905_CR_DEFAULT, ARRAY_SIZE(NRF905_CR_DEFAULT));
+	if (nRF905TX(nRF905SPIfd, pTXwCMD, ARRAY_SIZE(NRF905_CR_DEFAULT) + 1) < 0){
+		free(pTXwCMD);
+		NRF905D_LOG_ERR("nRF905 control register initialization failed at nRF905 TX.");
+		return -1;
+	}
+
+	pRXwStatus = malloc(ARRAY_SIZE(NRF905_CR_DEFAULT) + 1);
+	if (NULL == pRXwStatus){
+		free(pTXwCMD);
+		NRF905D_LOG_ERR("nRF905CR_Initial failed because of no RX RAM.");
+		return (-1);
+	}
+	pTXwCMD[0] = NRF905_CMD_RC(0);
+	if (nRF905RX(nRF905SPIfd, pTXwCMD, pRXwStatus, ARRAY_SIZE(NRF905_CR_DEFAULT) + 1) < 0){
+		free(pTXwCMD);
+		free(pRXwStatus);
+		NRF905D_LOG_ERR("nRF905 control register initialization failed at nRF905 RX.");
+		return -1;
+	}
+	if (memcmp(pRXwStatus + 1, NRF905_CR_DEFAULT, ARRAY_SIZE(NRF905_CR_DEFAULT)) != 0){
+		free(pTXwCMD);
+		free(pRXwStatus);
+		NRF905D_LOG_ERR("nRF905 control register initialization failed at comparing CR value.");
+		return -1;
+	}
+	free(pTXwCMD);
+	free(pRXwStatus);
 	return 0;
 }
 
@@ -388,25 +315,26 @@ int32_t main(void) {
 
 	NRF905D_LOG_INFO("nRF905 Daemon start...");
 
-	nInitGPIO();
-
-	if (setNRF905Mode(NRF905_MODE_PWR_DOWN) < 0){
-		return nDisableGPIO();
+	if (nInitNRF905GPIO() < 0){
+		NRF905D_LOG_ERR("Initialize nRF905 GPIO failed.");
+		return nDisableSPI_GPIO();
 	}
 
 	nRF905SPI_Fd = open(nRF905SPI_Device, O_RDWR);
 	if (nRF905SPI_Fd < 0) {
 		NRF905D_LOG_ERR("Can't open device %s.", nRF905SPI_Device);
-		return nDisableGPIO();
+		return nDisableSPI_GPIO();
 	}
 
 	if (nRF905SpiInitial(nRF905SPI_Fd) < 0){
 		close(nRF905SPI_Fd);
-		return nDisableGPIO();
+		return nDisableSPI_GPIO();
 	}
 
 	if (nRF905CR_Initial(nRF905SPI_Fd) < 0){
-
+		close(nRF905SPI_Fd);
+		NRF905D_LOG_ERR("nRF905CR_Initial failed.");
+		return nDisableSPI_GPIO();
 	}
 
 	// Prepare the pipe
@@ -414,7 +342,7 @@ int32_t main(void) {
 	if(nRet < 0){
 		NRF905D_LOG_ERR("Open task execution pipe failed with error:%d.", nRet);
 		close(nRF905SPI_Fd);
-		return nDisableGPIO();
+		return nDisableSPI_GPIO();
 	}
 
 	// Start little birds
@@ -422,7 +350,7 @@ int32_t main(void) {
 	if(nRet < 0){
 		NRF905D_LOG_ERR("Start nRF905 communication thread failed with error:%d.", nRet);
 		close(nRF905SPI_Fd);
-		return nDisableGPIO();
+		return nDisableSPI_GPIO();
 	}
 
 	tNRF905CommThreadPara.nRF905SPI_Fd = nRF905SPI_Fd;
@@ -431,7 +359,7 @@ int32_t main(void) {
 	if(nRet < 0){
 		NRF905D_LOG_ERR("Start routine thread failed with error:%d.", nRet);
 		close(nRF905SPI_Fd);
-		return nDisableGPIO();
+		return nDisableSPI_GPIO();
 	}
 
 	unlink(NRF905_DATA_FIFO_C_WR_PATH);
@@ -440,7 +368,7 @@ int32_t main(void) {
 	if (nRet < 0) {
 		NRF905D_LOG_ERR("mkfifo failed with error:%d.", errno);
 		close(nRF905SPI_Fd);
-		return nDisableGPIO();
+		return nDisableSPI_GPIO();
 	}
 
 	nRet = mkfifo(NRF905_DATA_FIFO_C_RD_PATH, S_IRUSR| S_IWUSR);
@@ -448,7 +376,7 @@ int32_t main(void) {
 		NRF905D_LOG_ERR("mkfifo failed with error:%d.", errno);
 		close(nRF905SPI_Fd);
 		unlink(NRF905_DATA_FIFO_C_WR_PATH);
-		return nDisableGPIO();
+		return nDisableSPI_GPIO();
 	}
 
 	// in PHP NRF905_DATA_FIFO_C_RD_PATH should also be opened first
@@ -458,7 +386,7 @@ int32_t main(void) {
 		close(nRF905SPI_Fd);
 		unlink(NRF905_DATA_FIFO_C_WR_PATH);
 		unlink(NRF905_DATA_FIFO_C_RD_PATH);
-		return nDisableGPIO();
+		return nDisableSPI_GPIO();
 	}
 
 	nNRF905DataFIFO_C_Write = open(NRF905_DATA_FIFO_C_WR_PATH, O_WRONLY);
@@ -467,7 +395,7 @@ int32_t main(void) {
 		close(nRF905SPI_Fd);
 		unlink(NRF905_DATA_FIFO_C_WR_PATH);
 		unlink(NRF905_DATA_FIFO_C_RD_PATH);
-		return nDisableGPIO();
+		return nDisableSPI_GPIO();
 	}
 
 	// If no one open the other side of the two FIFO, and also no INT, here will never reach
@@ -482,5 +410,5 @@ int32_t main(void) {
 	unlink(NRF905_DATA_FIFO_C_WR_PATH);
 	unlink(NRF905_DATA_FIFO_C_RD_PATH);
 	close(nRF905SPI_Fd);
-	return nDisableGPIO();
+	return nDisableSPI_GPIO();
 }

@@ -10,6 +10,10 @@
 
 #include <syslog.h>
 
+#define NRF905_TX_EN_PIN					17
+#define NRF905_TRX_CE_PIN					18
+#define NRF905_PWR_UP_PIN					27
+
 #define NRF905D_LOG_ERR(arg...)			openlog("nRF905.D", LOG_PID, 0);\
 										syslog(LOG_USER | LOG_ERR, arg);\
 										closelog()
