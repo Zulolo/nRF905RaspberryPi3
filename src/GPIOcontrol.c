@@ -79,6 +79,7 @@ static int32_t nEnableSPI_GPIO(void)
 		NRF905D_LOG_ERR("GPIO pin enable failed.");
 		return (-1);
 	}
+	usleep(100000);
 	return 0;
 }
 
@@ -104,6 +105,7 @@ static int32_t GPIODirection(int32_t pin, int32_t dir)
 	}
 
 	close(fd);
+
 	return(0);
 }
 
@@ -113,7 +115,7 @@ int32_t nInitNRF905GPIO(void)
 		NRF905D_LOG_ERR("Enable SPI GPIO pin failed.");
 		return (-1);
 	}
-	usleep(100000);
+
 	/*
 	 * Set GPIO directions
 	 */
@@ -128,7 +130,7 @@ int32_t nInitNRF905GPIO(void)
 		NRF905D_LOG_ERR("Config GPIO output pin failed.");
 		return (-1);
 	}
-	usleep(1000);
+	usleep(10000);
 	return 0;
 }
 

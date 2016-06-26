@@ -10,14 +10,39 @@
 
 #include <syslog.h>
 
+#define NRF905_TX_EN_PIN				17
+#define NRF905_TRX_CE_PIN				18
+#define NRF905_PWR_UP_PIN				27
+
+#define NRF905_CD_PIN					22
+#define NRF905_AM_PIN					23
+#define NRF905_DR_PIN					24
+
+#define NRF905D_LOG_ERR(arg...)			openlog("nRF905.D", LOG_PID, 0);\
+										syslog(LOG_USER | LOG_ERR, arg);\
+										closelog()
+
+#define NRF905D_LOG_INFO(arg...)		openlog("nRF905.D", LOG_PID, 0);\
+										syslog(LOG_USER | LOG_INFO, arg);\
+										closelog()
+
+#define US_PER_SECONDE					1000000
+
+typedef enum _nRF905Boolean {
+	NRF905_FALSE = 0,
+	NRF905_TRUE = !NRF905_FALSE
+}nRF905Boolean_t;
+
 #ifdef __USED_NRF905_INTERNAL__
 
 	#include "GPIOcontrol.h"
 
+	#define __NRF905_EXTERN__
 	#define NRF905_DATA_FIFO_FOLDER_PATH		"/var/tmp/"
 	#define NRF905_DATA_FIFO_C_WR_PATH			NRF905_DATA_FIFO_FOLDER_PATH "data_fifo_c_wr_php_rd"
 	#define NRF905_DATA_FIFO_C_RD_PATH			NRF905_DATA_FIFO_FOLDER_PATH "data_fifo_c_rd_php_wr"
 	#define ARRAY_SIZE(a) 						(sizeof(a) / sizeof((a)[0]))
+	#define NRF905_SPI_DEVICE					"/dev/spidev0.0"
 
 	/* Here is the RF rule:
 	 * UP keep transfer carrier and hopping according to unRF_HOPPING_TABLE every 200ms in no match state which
@@ -44,13 +69,17 @@
 	#define NRF905_RX_ADDR_LEN						4
 	#define NRF905_RX_PAYLOAD_LEN					16
 	#define NRF905_TX_PAYLOAD_LEN					16
-	#define MAX_CD_RETRY_NUM						20
+	#define HOPPING_MAX_CD_RETRY_NUM				20
+	#define EXEC_TSK_MAX_CD_RETRY_NUM				HOPPING_MAX_CD_RETRY_NUM
 	#define CD_RETRY_DELAY_US						50
 
 	#define AFTER_SET_BURST_TX_MAX_DELAY_US			5000
 	#define AFTER_SET_BURST_RX_MAX_CD_DELAY_US		10000
 	#define AFTER_CD_MAX_AM_DELAY_US				5000
 	#define AFTER_AM_MAX_DR_DELAY_US				5000
+	#define ROUTINE_TASK_INTERVAL_US				500000
+
+	#define NRF905_MAX_COMM_ERR_BEFORE_HOPPING		20
 
 	typedef enum _nRF905Modes {
 		NRF905_MODE_PWR_DOWN = 0,
@@ -88,7 +117,7 @@
 	typedef struct _NRF905CommThreadPara{
 		int32_t nTaskReadPipe;
 		int32_t nRF905SPI_Fd;
-	}nRF905CommThreadPara_t;
+	}nRF905ThreadPara_t;
 
 	// MSB of CH_NO will always be 0
 	static const uint8_t NRF905_CR_DEFAULT[] =	{0x4C, 0x08,		// F=(422.4+(0x6C<<1)/10)*1; No retransmission; +6db; NOT reduce receive power
@@ -118,39 +147,23 @@
 																		{GPIO_LEVEL_HIGH, GPIO_LEVEL_LOW, GPIO_LEVEL_LOW},
 																		{GPIO_LEVEL_HIGH, GPIO_LEVEL_HIGH, GPIO_LEVEL_LOW},
 																		{GPIO_LEVEL_HIGH, GPIO_LEVEL_HIGH, GPIO_LEVEL_HIGH}};
-	static const char nRF905SPI_Device[] = "/dev/spidev0.0";
 	static uint8_t unSPI_Mode = SPI_MODE_0;
 	static uint8_t unSPI_Bits = 8;
 	static uint32_t unSPI_Speed = 5000000;
 	static uint16_t unSPI_Delay = 1000;
-	static uint8_t unNeedtoClose = 0;
-	static uint8_t unNRF905RX_AddressGlobal[4];
+	static uint8_t unNeedtoClose = NRF905_FALSE;
 
 #else
-
+	#define __NRF905_EXTERN__			extern
 #endif
 
-#define NRF905_TX_EN_PIN				17
-#define NRF905_TRX_CE_PIN				18
-#define NRF905_PWR_UP_PIN				27
+typedef struct _remoteControlMap {
+	uint32_t unNRF905CommSendFrameErr;
+	uint32_t unNRF905CommSendFrameErrTotal;
+	uint32_t unNRF905CommSendFrameOK;
+	uint32_t unNRF905ChNoAndPwr;
+	uint32_t unNRF905RX_Address;
+}RemoteControlMap_t;
 
-#define NRF905_CD_PIN					22
-#define NRF905_AM_PIN					23
-#define NRF905_DR_PIN					24
-
-#define NRF905D_LOG_ERR(arg...)			openlog("nRF905.D", LOG_PID, 0);\
-										syslog(LOG_USER | LOG_ERR, arg);\
-										closelog()
-
-#define NRF905D_LOG_INFO(arg...)		openlog("nRF905.D", LOG_PID, 0);\
-										syslog(LOG_USER | LOG_INFO, arg);\
-										closelog()
-
-#define US_PER_SECONDE					1000000
-
-typedef enum _nRF905Boolean {
-	NRF905_FALSE = 0,
-	NRF905_TRUE = !NRF905_FALSE
-}nRF905Boolean_t;
-
+__NRF905_EXTERN__ RemoteControlMap_t tRemoteControlMap;
 #endif /* NRF905_D_H_ */

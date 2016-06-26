@@ -30,7 +30,7 @@
 
 void sighandler(int32_t signum, siginfo_t *info, void *ptr)
 {
-	unNeedtoClose = 1;
+	unNeedtoClose = NRF905_TRUE;
 }
 
 int32_t setNRF905Mode(nRF905Mode_t tNRF905Mode)
@@ -147,6 +147,7 @@ static int32_t nRF905CR_Initial(int32_t nRF905SPIfd)
 {
 	uint8_t* pTXwCMD;
 	uint8_t* pRXwStatus;
+	uint32_t unIndex;
 
 	pTXwCMD = malloc(ARRAY_SIZE(NRF905_CR_DEFAULT) + 1);
 	if (NULL == pTXwCMD){
@@ -160,7 +161,7 @@ static int32_t nRF905CR_Initial(int32_t nRF905SPIfd)
 		NRF905D_LOG_ERR("nRF905 control register initialization failed at nRF905 TX.");
 		return -1;
 	}
-	nGetAddrFromCH_NO(NRF905_CR_DEFAULT[0] | ((uint16_t)(NRF905_CR_DEFAULT[1] & 0x01) << 8), unNRF905RX_AddressGlobal);
+	nGetAddrFromCH_NO(NRF905_CR_DEFAULT[0] | ((uint16_t)(NRF905_CR_DEFAULT[1] & 0x01) << 8), (uint8_t*)(&(tRemoteControlMap.unNRF905RX_Address)));
 	pRXwStatus = malloc(ARRAY_SIZE(NRF905_CR_DEFAULT) + 1);
 	if (NULL == pRXwStatus){
 		free(pTXwCMD);
@@ -173,6 +174,9 @@ static int32_t nRF905CR_Initial(int32_t nRF905SPIfd)
 		free(pRXwStatus);
 		NRF905D_LOG_ERR("nRF905 control register initialization failed at nRF905 RX.");
 		return -1;
+	}
+	for (unIndex = 0; unIndex < ARRAY_SIZE(NRF905_CR_DEFAULT) + 1; unIndex++){
+		printf("0x%02X\n", pRXwStatus[unIndex]);
 	}
 	if (memcmp(pRXwStatus + 1, NRF905_CR_DEFAULT, ARRAY_SIZE(NRF905_CR_DEFAULT)) != 0){
 		free(pTXwCMD);
@@ -237,7 +241,8 @@ static int32_t nSetNRF905FrqPwr(int32_t nRF905SPI_Fd, uint16_t unFrqPwr)
 		NRF905D_LOG_ERR("Set nRF905's frequency and power failed.");
 		return (-1);
 	}
-	nGetAddrFromCH_NO(unFrqPwr & CH_MSK_IN_CC_REG, unNRF905RX_AddressGlobal);
+	tRemoteControlMap.unNRF905ChNoAndPwr = unFrqPwr;
+	nGetAddrFromCH_NO(unFrqPwr & CH_MSK_IN_CC_REG, (uint8_t*)(&(tRemoteControlMap.unNRF905RX_Address)));
 //	unSPI_WR_Data[0] = NRF905_CMD_WC(NRF905_RX_ADDRESS_IN_CR);
 //	memcpy(unSPI_WR_Data + 1, unNRF905RX_AddressGlobal, 4);
 //	if (nRF905_SPI_WR(nRF905SPI_Fd, unSPI_WR_Data, 5) < 0){
@@ -247,44 +252,19 @@ static int32_t nSetNRF905FrqPwr(int32_t nRF905SPI_Fd, uint16_t unFrqPwr)
 	return 0;
 }
 
-static int32_t nRF905Hopping(int32_t nRF905SPI_Fd)
-{
-	uint32_t unCD_RetryCNT;
-	uint32_t unHoppingTableIndex;
-
-	for (unHoppingTableIndex = 0; unHoppingTableIndex < ARRAY_SIZE(unRF_HOPPING_TABLE); unHoppingTableIndex++){
-		if (nSetNRF905FrqPwr(nRF905SPI_Fd, unRF_HOPPING_TABLE[unHoppingTableIndex]) < 0){
-			NRF905D_LOG_ERR("Can not set nRF905's frequency and power.");
-			continue;
-		}else{
-			if (setNRF905Mode(NRF905_MODE_BURST_RX) < 0){
-				NRF905D_LOG_ERR("Set nRF905 mode error during hopping.");
-				continue;
-			}
-			for (unCD_RetryCNT = 0; unCD_RetryCNT < MAX_CD_RETRY_NUM; unCD_RetryCNT++){
-				if (bIsCarrierDetected() == NRF905_TRUE){
-					return 0;
-				}
-				usleep(CD_RETRY_DELAY_US);
-			}
-		}
-	}
-	return (-1);
-}
-
 uint64_t getTimeDiffInUs(struct timeval tLastTime, struct timeval tCurrentTime)
 {
 	return abs(tCurrentTime.tv_usec - tLastTime.tv_usec + (tCurrentTime.tv_usec - tLastTime.tv_usec) * US_PER_SECONDE);
 }
 
-static int32_t nRF905ReceiveFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905CommTask, uint8_t* pNRF905RX_Address)
+static int32_t nRF905ReceiveFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905CommTask, uint32_t unNRF905RX_Address)
 {
 	uint8_t unSPI_WR_RX_AddressFrame[NRF905_RX_ADDR_LEN + 1];
 	uint8_t unSPI_RD_RX_PayloadFrame[NRF905_RX_PAYLOAD_LEN + 1];
 	struct timeval tLastTime, tCurrentTime;
 
 	unSPI_WR_RX_AddressFrame[0] = NRF905_CMD_WC(NRF905_RX_ADDRESS_IN_CR);
-	memcpy(unSPI_WR_RX_AddressFrame + 1, pNRF905RX_Address, NRF905_RX_ADDR_LEN);
+	memcpy(unSPI_WR_RX_AddressFrame + 1, &unNRF905RX_Address, NRF905_RX_ADDR_LEN);
 	if (nRF905_SPI_WR(nRF905SPI_Fd, unSPI_WR_RX_AddressFrame, NRF905_RX_ADDR_LEN + 1) < 0){
 		NRF905D_LOG_ERR("Set RX address error.");
 		return (-1);
@@ -345,14 +325,15 @@ static int32_t nRF905ReceiveFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905
 	return 0;
 }
 
-static int32_t nRF905SendFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905CommTask, uint8_t* pNRF905TX_Address)
+static int32_t nRF905SendFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905CommTask, uint32_t unNRF905TX_Address)
 {
 	uint8_t unSPI_WR_TX_AddressFrame[NRF905_TX_ADDR_LEN + 1];
 	uint8_t unSPI_WR_TX_PayloadFrame[NRF905_TX_PAYLOAD_LEN + 1];
 	struct timeval tLastTime, tCurrentTime;
 
+	NRF905D_LOG_INFO("nRF905 start send frame.");
 	unSPI_WR_TX_AddressFrame[0] = NRF905_CMD_WTA;
-	memcpy(unSPI_WR_TX_AddressFrame + 1, pNRF905TX_Address, NRF905_TX_ADDR_LEN);
+	memcpy(unSPI_WR_TX_AddressFrame + 1, &unNRF905TX_Address, NRF905_TX_ADDR_LEN);
 	if (nRF905_SPI_WR(nRF905SPI_Fd, unSPI_WR_TX_AddressFrame, NRF905_TX_ADDR_LEN + 1) < 0){
 		NRF905D_LOG_ERR("Set TX address error.");
 		return (-1);
@@ -381,7 +362,7 @@ static int32_t nRF905SendFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905Com
 				return (-1);
 			}
 			// start to read response
-			if (nRF905ReceiveFrame(nRF905SPI_Fd, tNRF905CommTask, pNRF905TX_Address) < 0){
+			if (nRF905ReceiveFrame(nRF905SPI_Fd, tNRF905CommTask, unNRF905TX_Address) < 0){
 				NRF905D_LOG_ERR("Data receive failed.");
 				return (-1);
 			}
@@ -397,6 +378,47 @@ static int32_t nRF905SendFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905Com
 	return 0;
 }
 
+static int32_t nRF905Hopping(int32_t nRF905SPI_Fd)
+{
+	uint32_t unCD_RetryCNT;
+	uint32_t unHoppingTableIndex;
+	nRF905CommTask_t tNRF905HoppingTask;
+	static uint8_t unHoppingPayload[NRF905_TX_PAYLOAD_LEN] = {0xA5, 0xA5, 0xDC, 0xCD, };
+
+	NRF905D_LOG_INFO("Hopping procedure start.");
+	tNRF905HoppingTask.tCommType = NRF905_COMM_TYPE_TX_PKG;
+	tNRF905HoppingTask.unCommByteNum = NRF905_TX_PAYLOAD_LEN;
+	tNRF905HoppingTask.pTX_Frame = unHoppingPayload;
+
+	for (unHoppingTableIndex = 0; unHoppingTableIndex < ARRAY_SIZE(unRF_HOPPING_TABLE); unHoppingTableIndex++){
+		if (nSetNRF905FrqPwr(nRF905SPI_Fd, unRF_HOPPING_TABLE[unHoppingTableIndex]) < 0){
+			NRF905D_LOG_ERR("Can not set nRF905's frequency and power.");
+			continue;
+		}else{
+			if (setNRF905Mode(NRF905_MODE_BURST_RX) < 0){
+				NRF905D_LOG_ERR("Set nRF905 mode error during hopping.");
+				continue;
+			}
+			for (unCD_RetryCNT = 0; unCD_RetryCNT < HOPPING_MAX_CD_RETRY_NUM; unCD_RetryCNT++){
+				if (bIsCarrierDetected() == NRF905_TRUE){
+					if (nRF905SendFrame(nRF905SPI_Fd, tNRF905HoppingTask, tRemoteControlMap.unNRF905RX_Address) < 0){
+						NRF905D_LOG_ERR("Carrier detected, but send frame error. Try next channel.");
+						break;
+					}else{
+						NRF905D_LOG_INFO("Hopping success, %u was used as parameter.", tRemoteControlMap.unNRF905RX_Address);
+						tRemoteControlMap.unNRF905CommSendFrameErr = 0;
+						return 0;
+					}
+				}else{
+					usleep(CD_RETRY_DELAY_US);
+				}
+			}
+		}
+	}
+	NRF905D_LOG_INFO("Hopping failed.");
+	return (-1);
+}
+
 static int32_t nNRF905ExecuteTask(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905CommTask)
 {
 	nRF905State_t tNRF905State = NRF905_STATE_STDBY;
@@ -405,17 +427,18 @@ static int32_t nNRF905ExecuteTask(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905
 	while(tNRF905State != NRF905_STATE_END){
 		switch(tNRF905State){
 		case NRF905_STATE_STDBY:
+			NRF905D_LOG_INFO("nRF905 standby mode enter.");
 			if (setNRF905Mode(NRF905_MODE_BURST_RX) < 0){
 				NRF905D_LOG_ERR("Set nRF905 mode error during executing task.");
 				return (-1);
 			}
-			for (unCD_RetryCNT = 0; unCD_RetryCNT < MAX_CD_RETRY_NUM; unCD_RetryCNT++){
+			for (unCD_RetryCNT = 0; unCD_RetryCNT < EXEC_TSK_MAX_CD_RETRY_NUM; unCD_RetryCNT++){
 				if (bIsCarrierDetected() == NRF905_TRUE){
 					break;
 				}
 				usleep(CD_RETRY_DELAY_US);
 			}
-			if (MAX_CD_RETRY_NUM == unCD_RetryCNT){
+			if (EXEC_TSK_MAX_CD_RETRY_NUM == unCD_RetryCNT){
 				tNRF905State = NRF905_STATE_NO_CD;
 			}else{
 				tNRF905State = NRF905_STATE_CD;
@@ -423,10 +446,12 @@ static int32_t nNRF905ExecuteTask(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905
 			break;
 
 		case NRF905_STATE_NO_CD:
+			NRF905D_LOG_INFO("nRF905 no carrier detected mode enter.");
 			tNRF905State = NRF905_STATE_HOPPING;
 			break;
 
 		case NRF905_STATE_HOPPING:
+			NRF905D_LOG_INFO("nRF905 hopping mode enter.");
 			if (nRF905Hopping(nRF905SPI_Fd) < 0){
 				NRF905D_LOG_ERR("Can not find any valid carrier in air.");
 				tNRF905State = NRF905_STATE_END;
@@ -436,12 +461,21 @@ static int32_t nNRF905ExecuteTask(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905
 			break;
 
 		case NRF905_STATE_CD:
-			if (nRF905SendFrame(nRF905SPI_Fd, tNRF905CommTask, unNRF905RX_AddressGlobal) < 0){
-				NRF905D_LOG_ERR("nRF905 send frame error.");
-				tNRF905State = NRF905_STATE_END;
+			NRF905D_LOG_INFO("nRF905 carrier detected mode enter.");
+			if (tRemoteControlMap.unNRF905CommSendFrameErr > NRF905_MAX_COMM_ERR_BEFORE_HOPPING){
+				tNRF905State = NRF905_STATE_HOPPING;
 			}else{
-				tNRF905State = NRF905_STATE_END;
+				if (nRF905SendFrame(nRF905SPI_Fd, tNRF905CommTask, tRemoteControlMap.unNRF905RX_Address) < 0){
+					NRF905D_LOG_ERR("nRF905 send frame error.");
+					tRemoteControlMap.unNRF905CommSendFrameErr++;
+					tRemoteControlMap.unNRF905CommSendFrameErrTotal++;
+					tNRF905State = NRF905_STATE_END;
+				}else{
+					tRemoteControlMap.unNRF905CommSendFrameOK++;
+					tNRF905State = NRF905_STATE_END;
+				}
 			}
+
 			break;
 
 		default:
@@ -457,9 +491,10 @@ static int32_t nNRF905ExecuteTask(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905
 static void* pNRF905Comm(void *ptr)
 {
 	nRF905CommTask_t tNRF905CommTask;
-	nRF905CommThreadPara_t tNRF905CommThreadPara = *((nRF905CommThreadPara_t *)ptr);
+	nRF905ThreadPara_t tNRF905CommThreadPara = *((nRF905ThreadPara_t *)ptr);
 
-	while (unNeedtoClose == 0){
+	NRF905D_LOG_INFO("nRF905 communication thread start.");
+	while (NRF905_FALSE == unNeedtoClose){
 		if (read(tNRF905CommThreadPara.nTaskReadPipe, &tNRF905CommTask, sizeof(nRF905CommTask_t)) > 0){
 			if (tNRF905CommTask.unCommByteNum > 0){
 				tNRF905CommTask.pTX_Frame = malloc(tNRF905CommTask.unCommByteNum);
@@ -469,6 +504,7 @@ static void* pNRF905Comm(void *ptr)
 					if (read(tNRF905CommThreadPara.nTaskReadPipe, tNRF905CommTask.pTX_Frame, tNRF905CommTask.unCommByteNum) > 0){
 						tNRF905CommTask.pRX_Frame = malloc(tNRF905CommTask.unCommByteNum + 1);
 						if (NULL != tNRF905CommTask.pRX_Frame){
+							NRF905D_LOG_INFO("One ACK task was successfully gotten from pipe.");
 							nNRF905ExecuteTask(tNRF905CommThreadPara.nRF905SPI_Fd, tNRF905CommTask);
 							free(tNRF905CommTask.pRX_Frame);
 						}else{
@@ -483,20 +519,42 @@ static void* pNRF905Comm(void *ptr)
 		}else{
 			NRF905D_LOG_ERR("Read task communication type from pipe error with code:%d", errno);
 		}
-
 	}
-	pthread_exit(0);
+	NRF905D_LOG_INFO("nRF905 communication thread exit.");
+	pthread_exit("nRF905 communication thread exit.");
 }
 
 void* pRoutineWork(void *ptr)
 {
+	nRF905ThreadPara_t tRoutineWorkThreadPara = *((nRF905ThreadPara_t *)ptr);
+	nRF905CommTask_t tNRF905CommTask;
+	static int8_t unACK_Payload[NRF905_TX_PAYLOAD_LEN] = {0xA5, 0xA5, 0xDC, 0xCD, };
 
+	NRF905D_LOG_INFO("nRoutine work thread start.");
+	tNRF905CommTask.tCommType = NRF905_COMM_TYPE_TX_PKG;
+	tNRF905CommTask.unCommByteNum = NRF905_TX_PAYLOAD_LEN;
+
+	while (NRF905_FALSE == unNeedtoClose){
+		if (write(tRoutineWorkThreadPara.nTaskReadPipe, &tNRF905CommTask, sizeof(nRF905CommTask_t)) > 0 ){
+			if (write(tRoutineWorkThreadPara.nTaskReadPipe, unACK_Payload, NRF905_TX_PAYLOAD_LEN) > 0 ){
+				// increase some statistic internal variable here
+				NRF905D_LOG_INFO("One ACK task was successfully added into pipe.");
+			}else{
+				NRF905D_LOG_ERR("Write task communication payload to pipe error with code:%d", errno);
+			}
+		}else{
+			NRF905D_LOG_ERR("Write task communication type to pipe error with code:%d", errno);
+		}
+		usleep(ROUTINE_TASK_INTERVAL_US);
+	}
+	NRF905D_LOG_INFO("Routine work thread exit.");
 	pthread_exit("Routine work exit.");
 }
 
 int32_t main(void) {
 	int32_t nRF905SPI_Fd;
-	nRF905CommThreadPara_t tNRF905CommThreadPara;
+	nRF905ThreadPara_t tNRF905CommThreadPara;
+	nRF905ThreadPara_t tRoutineWorkThreadPara;
 	int32_t nRet;
 	struct sigaction tSignalAction;
 	pthread_t tRoutineThread, tNRF905CommThread;
@@ -512,22 +570,25 @@ int32_t main(void) {
 
 	NRF905D_LOG_INFO("nRF905 Daemon start...");
 
+	printf("Initialize GPIO.\n");
 	if (nInitNRF905GPIO() < 0){
 		NRF905D_LOG_ERR("Initialize nRF905 GPIO failed.");
 		return nDisableSPI_GPIO();
 	}
 
-	nRF905SPI_Fd = open(nRF905SPI_Device, O_RDWR);
+	nRF905SPI_Fd = open(NRF905_SPI_DEVICE, O_RDWR);
 	if (nRF905SPI_Fd < 0) {
-		NRF905D_LOG_ERR("Can't open device %s.", nRF905SPI_Device);
+		NRF905D_LOG_ERR("Can't open device %s.", NRF905_SPI_DEVICE);
 		return nDisableSPI_GPIO();
 	}
 
+	printf("Initialize SPI.\n");
 	if (nRF905SpiInitial(nRF905SPI_Fd) < 0){
 		close(nRF905SPI_Fd);
 		return nDisableSPI_GPIO();
 	}
 
+	printf("Initialize nRF905 control register.\n");
 	if (nRF905CR_Initial(nRF905SPI_Fd) < 0){
 		close(nRF905SPI_Fd);
 		NRF905D_LOG_ERR("nRF905CR_Initial failed.");
@@ -543,27 +604,38 @@ int32_t main(void) {
 	}
 
 	// Start little birds
-	nRet = pthread_create(&tNRF905CommThread, NULL, pNRF905Comm, nTaskExecPipe);
-	if(nRet < 0){
-		NRF905D_LOG_ERR("Start nRF905 communication thread failed with error:%d.", nRet);
-		close(nRF905SPI_Fd);
-		return nDisableSPI_GPIO();
-	}
-
+	printf("Start nRF905 communication thread.\n");
 	tNRF905CommThreadPara.nRF905SPI_Fd = nRF905SPI_Fd;
 	tNRF905CommThreadPara.nTaskReadPipe = nTaskExecPipe[0];
-	nRet = pthread_create(&tRoutineThread, NULL, pRoutineWork, &tNRF905CommThreadPara);
+	nRet = pthread_create(&tNRF905CommThread, NULL, pNRF905Comm, &tNRF905CommThreadPara);
 	if(nRet < 0){
-		NRF905D_LOG_ERR("Start routine thread failed with error:%d.", nRet);
+		NRF905D_LOG_ERR("Start nRF905 communication thread failed with error:%d.", nRet);
+		close(nTaskExecPipe[0]);
+		close(nTaskExecPipe[1]);
 		close(nRF905SPI_Fd);
 		return nDisableSPI_GPIO();
 	}
 
+	printf("Start routine work thread.\n");
+	tRoutineWorkThreadPara.nRF905SPI_Fd = nRF905SPI_Fd;
+	tRoutineWorkThreadPara.nTaskReadPipe = nTaskExecPipe[1];
+	nRet = pthread_create(&tRoutineThread, NULL, pRoutineWork, &tRoutineWorkThreadPara);
+	if(nRet < 0){
+		NRF905D_LOG_ERR("Start routine thread failed with error:%d.", nRet);
+		close(nTaskExecPipe[0]);
+		close(nTaskExecPipe[1]);
+		close(nRF905SPI_Fd);
+		return nDisableSPI_GPIO();
+	}
+
+	printf("Create FIFO to handle data sent by PHP from web application.\n");
 	unlink(NRF905_DATA_FIFO_C_WR_PATH);
 	unlink(NRF905_DATA_FIFO_C_RD_PATH);
 	nRet = mkfifo(NRF905_DATA_FIFO_C_WR_PATH, S_IRUSR| S_IWUSR);
 	if (nRet < 0) {
 		NRF905D_LOG_ERR("mkfifo failed with error:%d.", errno);
+		close(nTaskExecPipe[0]);
+		close(nTaskExecPipe[1]);
 		close(nRF905SPI_Fd);
 		return nDisableSPI_GPIO();
 	}
@@ -571,6 +643,8 @@ int32_t main(void) {
 	nRet = mkfifo(NRF905_DATA_FIFO_C_RD_PATH, S_IRUSR| S_IWUSR);
 	if (nRet < 0) {
 		NRF905D_LOG_ERR("mkfifo failed with error:%d.", errno);
+		close(nTaskExecPipe[0]);
+		close(nTaskExecPipe[1]);
 		close(nRF905SPI_Fd);
 		unlink(NRF905_DATA_FIFO_C_WR_PATH);
 		return nDisableSPI_GPIO();
@@ -580,6 +654,8 @@ int32_t main(void) {
 	nNRF905DataFIFO_C_Read = open(NRF905_DATA_FIFO_C_RD_PATH, O_RDONLY);
 	if (nNRF905DataFIFO_C_Read < 0){
 		NRF905D_LOG_ERR("Open FIFO read pipe with error:%d.", errno);
+		close(nTaskExecPipe[0]);
+		close(nTaskExecPipe[1]);
 		close(nRF905SPI_Fd);
 		unlink(NRF905_DATA_FIFO_C_WR_PATH);
 		unlink(NRF905_DATA_FIFO_C_RD_PATH);
@@ -589,6 +665,8 @@ int32_t main(void) {
 	nNRF905DataFIFO_C_Write = open(NRF905_DATA_FIFO_C_WR_PATH, O_WRONLY);
 	if (nNRF905DataFIFO_C_Write < 0){
 		NRF905D_LOG_ERR("Open FIFO write pipe with error:%d.", errno);
+		close(nTaskExecPipe[0]);
+		close(nTaskExecPipe[1]);
 		close(nRF905SPI_Fd);
 		unlink(NRF905_DATA_FIFO_C_WR_PATH);
 		unlink(NRF905_DATA_FIFO_C_RD_PATH);
@@ -596,7 +674,7 @@ int32_t main(void) {
 	}
 
 	// If no one open the other side of the two FIFO, and also no INT, here will never reach
-	while (unNeedtoClose == 0){
+	while (NRF905_FALSE == unNeedtoClose){
 		usleep(500000);
 	}
 	NRF905D_LOG_INFO("INT signal was received, exit.");
@@ -604,6 +682,8 @@ int32_t main(void) {
 	pthread_join(tNRF905CommThread, NULL);
 	pthread_join(tRoutineThread, NULL);
 
+	close(nTaskExecPipe[0]);
+	close(nTaskExecPipe[1]);
 	unlink(NRF905_DATA_FIFO_C_WR_PATH);
 	unlink(NRF905_DATA_FIFO_C_RD_PATH);
 	close(nRF905SPI_Fd);
