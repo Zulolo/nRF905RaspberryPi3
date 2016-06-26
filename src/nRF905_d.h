@@ -47,6 +47,11 @@
 	#define MAX_CD_RETRY_NUM						20
 	#define CD_RETRY_DELAY_US						50
 
+	#define AFTER_SET_BURST_TX_MAX_DELAY_US			5000
+	#define AFTER_SET_BURST_RX_MAX_CD_DELAY_US		10000
+	#define AFTER_CD_MAX_AM_DELAY_US				5000
+	#define AFTER_AM_MAX_DR_DELAY_US				5000
+
 	typedef enum _nRF905Modes {
 		NRF905_MODE_PWR_DOWN = 0,
 		NRF905_MODE_STD_BY,
@@ -120,7 +125,7 @@
 	static uint16_t unSPI_Delay = 1000;
 	static uint8_t unNeedtoClose = 0;
 	static uint8_t unNRF905RX_AddressGlobal[4];
-	static nRF905Mode_t tNRF905ModeGlobal = NRF905_MODE_PWR_DOWN;
+
 #else
 
 #endif
@@ -141,6 +146,7 @@
 										syslog(LOG_USER | LOG_INFO, arg);\
 										closelog()
 
+#define US_PER_SECONDE					1000000
 
 typedef enum _nRF905Boolean {
 	NRF905_FALSE = 0,

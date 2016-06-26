@@ -12,6 +12,7 @@
 #include <unistd.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/time.h>
 #include <errno.h>
 #include <stdlib.h>
 #include <signal.h>
@@ -34,6 +35,8 @@ void sighandler(int32_t signum, siginfo_t *info, void *ptr)
 
 int32_t setNRF905Mode(nRF905Mode_t tNRF905Mode)
 {
+	static nRF905Mode_t tNRF905ModeGlobal = NRF905_MODE_PWR_DOWN;
+
 	if (tNRF905Mode >= NRF905_MODE_MAX){
 		NRF905D_LOG_ERR("tNRF905Mode error.");
 		return (-1);
@@ -269,11 +272,84 @@ static int32_t nRF905Hopping(int32_t nRF905SPI_Fd)
 	return (-1);
 }
 
+uint64_t getTimeDiffInUs(struct timeval tLastTime, struct timeval tCurrentTime)
+{
+	return abs(tCurrentTime.tv_usec - tLastTime.tv_usec + (tCurrentTime.tv_usec - tLastTime.tv_usec) * US_PER_SECONDE);
+}
+
+static int32_t nRF905ReceiveFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905CommTask, uint8_t* pNRF905RX_Address)
+{
+	uint8_t unSPI_WR_RX_AddressFrame[NRF905_RX_ADDR_LEN + 1];
+	uint8_t unSPI_RD_RX_PayloadFrame[NRF905_RX_PAYLOAD_LEN + 1];
+	struct timeval tLastTime, tCurrentTime;
+
+	unSPI_WR_RX_AddressFrame[0] = NRF905_CMD_WC(NRF905_RX_ADDRESS_IN_CR);
+	memcpy(unSPI_WR_RX_AddressFrame + 1, pNRF905RX_Address, NRF905_RX_ADDR_LEN);
+	if (nRF905_SPI_WR(nRF905SPI_Fd, unSPI_WR_RX_AddressFrame, NRF905_RX_ADDR_LEN + 1) < 0){
+		NRF905D_LOG_ERR("Set RX address error.");
+		return (-1);
+	}else{
+		// Start listen
+		setNRF905Mode(NRF905_MODE_BURST_RX);
+		// delay until CD set with timeout
+		gettimeofday(&tLastTime, NULL);
+		gettimeofday(&tCurrentTime, NULL);
+		while (getTimeDiffInUs(tLastTime, tCurrentTime) < AFTER_SET_BURST_RX_MAX_CD_DELAY_US){
+			if (bIsCarrierDetected() == NRF905_TRUE){
+				break;
+			}
+			gettimeofday(&tCurrentTime, NULL);
+		}
+		if (getTimeDiffInUs(tLastTime, tCurrentTime) >= AFTER_SET_BURST_RX_MAX_CD_DELAY_US){
+			setNRF905Mode(NRF905_MODE_STD_BY);
+			NRF905D_LOG_ERR("Detect carrier failed.");
+			return (-1);
+		}
+		// delay until AM set with timeout
+		gettimeofday(&tLastTime, NULL);
+		gettimeofday(&tCurrentTime, NULL);
+		while (getTimeDiffInUs(tLastTime, tCurrentTime) < AFTER_CD_MAX_AM_DELAY_US){
+			if (bIsAddressMatch() == NRF905_TRUE){
+				break;
+			}
+			gettimeofday(&tCurrentTime, NULL);
+		}
+		if (getTimeDiffInUs(tLastTime, tCurrentTime) >= AFTER_CD_MAX_AM_DELAY_US){
+			setNRF905Mode(NRF905_MODE_STD_BY);
+			NRF905D_LOG_ERR("Address match failed.");
+			return (-1);
+		}
+		// delay until DR set with timeout
+		gettimeofday(&tLastTime, NULL);
+		gettimeofday(&tCurrentTime, NULL);
+		while (getTimeDiffInUs(tLastTime, tCurrentTime) < AFTER_AM_MAX_DR_DELAY_US){
+			if (bIsDataReady() == NRF905_TRUE){
+				break;
+			}
+			gettimeofday(&tCurrentTime, NULL);
+		}
+		if (getTimeDiffInUs(tLastTime, tCurrentTime) >= AFTER_AM_MAX_DR_DELAY_US){
+			setNRF905Mode(NRF905_MODE_STD_BY);
+			NRF905D_LOG_ERR("Address match failed.");
+			return (-1);
+		}
+
+		// start SPI read RX payload from nRF905
+		unSPI_RD_RX_PayloadFrame[0] = NRF905_CMD_RRP;
+		if (nRF905_SPI_READ(nRF905SPI_Fd, unSPI_RD_RX_PayloadFrame, tNRF905CommTask.pRX_Frame, NRF905_RX_ADDR_LEN + 1) < 0){
+			NRF905D_LOG_ERR("Read RX payload from nRF905 failed.");
+			return (-1);
+		}
+	}
+
+	return 0;
+}
+
 static int32_t nRF905SendFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905CommTask, uint8_t* pNRF905TX_Address)
 {
 	uint8_t unSPI_WR_TX_AddressFrame[NRF905_TX_ADDR_LEN + 1];
 	uint8_t unSPI_WR_TX_PayloadFrame[NRF905_TX_PAYLOAD_LEN + 1];
-	uint8_t unSPI_RD_Frame[NRF905_RX_PAYLOAD_LEN + 1];
+	struct timeval tLastTime, tCurrentTime;
 
 	unSPI_WR_TX_AddressFrame[0] = NRF905_CMD_WTA;
 	memcpy(unSPI_WR_TX_AddressFrame + 1, pNRF905TX_Address, NRF905_TX_ADDR_LEN);
@@ -289,15 +365,32 @@ static int32_t nRF905SendFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905Com
 		}else{
 			// TX payload was successfully written into nRF905's register
 			// Start transmit
-
-			// delay a little. Once the TX_EN has been set, the data will be sent out no matter TX_EN is reset or not.
-
-			// wait until DR reset
-
+			setNRF905Mode(NRF905_MODE_BURST_TX);
+			// delay until DR set with timeout
+			gettimeofday(&tLastTime, NULL);
+			gettimeofday(&tCurrentTime, NULL);
+			while (getTimeDiffInUs(tLastTime, tCurrentTime) < AFTER_SET_BURST_TX_MAX_DELAY_US){
+				if (bIsDataReady() == NRF905_TRUE){
+					break;
+				}
+				gettimeofday(&tCurrentTime, NULL);
+			}
+			if (getTimeDiffInUs(tLastTime, tCurrentTime) >= AFTER_SET_BURST_TX_MAX_DELAY_US){
+				setNRF905Mode(NRF905_MODE_STD_BY);
+				NRF905D_LOG_ERR("Data transmit failed.");
+				return (-1);
+			}
 			// start to read response
-
-			// monitor CD, AM and DR with timeout
-
+			if (nRF905ReceiveFrame(nRF905SPI_Fd, tNRF905CommTask, pNRF905TX_Address) < 0){
+				NRF905D_LOG_ERR("Data receive failed.");
+				return (-1);
+			}
+			// If receive OK, frame was saved in the tNRF905CommTask.pRX_Frame
+			setNRF905Mode(NRF905_MODE_STD_BY);
+			if (memcmp(tNRF905CommTask.pTX_Frame, tNRF905CommTask.pRX_Frame + 1, tNRF905CommTask.unCommByteNum) != 0){
+				NRF905D_LOG_ERR("The received frame is different with sent one.");
+				return (-1);
+			}
 		}
 	}
 
@@ -308,10 +401,6 @@ static int32_t nNRF905ExecuteTask(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905
 {
 	nRF905State_t tNRF905State = NRF905_STATE_STDBY;
 	uint32_t unCD_RetryCNT;
-	uint32_t unAM_RetryCNT;
-	uint32_t unDR_RetryCNT;
-	uint32_t unTX_RetryCNT;
-	uint32_t unRX_RetryCNT;
 	// Use state machine here to control mode and hopping
 	while(tNRF905State != NRF905_STATE_END){
 		switch(tNRF905State){
@@ -351,7 +440,7 @@ static int32_t nNRF905ExecuteTask(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905
 				NRF905D_LOG_ERR("nRF905 send frame error.");
 				tNRF905State = NRF905_STATE_END;
 			}else{
-				tNRF905State = NRF905_STATE_TXING;
+				tNRF905State = NRF905_STATE_END;
 			}
 			break;
 
@@ -378,7 +467,13 @@ static void* pNRF905Comm(void *ptr)
 					NRF905D_LOG_ERR("WTF malloc fail??");
 				}else{
 					if (read(tNRF905CommThreadPara.nTaskReadPipe, tNRF905CommTask.pTX_Frame, tNRF905CommTask.unCommByteNum) > 0){
-						nNRF905ExecuteTask(tNRF905CommThreadPara.nRF905SPI_Fd, tNRF905CommTask);
+						tNRF905CommTask.pRX_Frame = malloc(tNRF905CommTask.unCommByteNum + 1);
+						if (NULL != tNRF905CommTask.pRX_Frame){
+							nNRF905ExecuteTask(tNRF905CommThreadPara.nRF905SPI_Fd, tNRF905CommTask);
+							free(tNRF905CommTask.pRX_Frame);
+						}else{
+							NRF905D_LOG_ERR("WTF malloc fail??");
+						}
 					}else{
 						NRF905D_LOG_ERR("Read task communication payload from pipe error with code:%d", errno);
 					}
