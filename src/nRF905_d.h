@@ -70,8 +70,10 @@ typedef enum _nRF905Boolean {
 	#define NRF905_RX_PAYLOAD_LEN					16
 	#define NRF905_TX_PAYLOAD_LEN					16
 	#define HOPPING_MAX_CD_RETRY_NUM				20
+	#define HOPPING_MAX_TX_RETRY_NUM				20
 	#define EXEC_TSK_MAX_CD_RETRY_NUM				HOPPING_MAX_CD_RETRY_NUM
 	#define CD_RETRY_DELAY_US						50
+	#define HOPPING_TX_RETRY_DELAY_US				500
 
 	#define AFTER_SET_BURST_TX_MAX_DELAY_US			5000
 	#define AFTER_SET_BURST_RX_MAX_CD_DELAY_US		10000
@@ -120,7 +122,7 @@ typedef enum _nRF905Boolean {
 	}nRF905ThreadPara_t;
 
 	// MSB of CH_NO will always be 0
-	static const uint8_t NRF905_CR_DEFAULT[] =	{0x4C, 0x08,		// F=(422.4+(0x6C<<1)/10)*1; No retransmission; +6db; NOT reduce receive power
+	static uint8_t NRF905_CR_DEFAULT[] =	{0x4C, 0x08,		// F=(422.4+(0x6C<<1)/10)*1; No retransmission; +6db; NOT reduce receive power
 		(NRF905_RX_ADDR_LEN << 4) | NRF905_TX_ADDR_LEN,	// 4 bytes RX & TX address;
 		NRF905_RX_PAYLOAD_LEN,
 		NRF905_TX_PAYLOAD_LEN, 	// 16 bytes RX & TX package length;

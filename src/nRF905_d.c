@@ -65,19 +65,21 @@ int32_t setNRF905Mode(nRF905Mode_t tNRF905Mode)
 	return 0;
 }
 
-static int32_t nRF905_SPI_WR(int32_t nRF905SPIfd, uint8_t* pTX_Frame, uint8_t unFrameLength)
+static int32_t nRF905_SPI_WR(int32_t nRF905SPIfd, uint8_t unCMD, uint8_t* pTX_Frame, uint8_t unFrameLength)
 {
-	uint8_t* pRX_Frame;
+	static uint8_t unRF905_SPI_TX_Frame[NRF905_RX_PAYLOAD_LEN + 1];
+	static uint8_t unRF905_SPI_RX_Frame[NRF905_RX_PAYLOAD_LEN + 1];
 	struct spi_ioc_transfer tSPI_Transfer;
 
-	pRX_Frame = malloc(unFrameLength + 1);
-	if (NULL == pRX_Frame){
-		NRF905D_LOG_ERR("nRF905TX failed because of no RAM.");
+	if (unFrameLength > NRF905_RX_PAYLOAD_LEN){
+		NRF905D_LOG_ERR("The frame need to send to nRF905 is too long.");
 		return (-1);
 	}
-	tSPI_Transfer.tx_buf = (unsigned long)pTX_Frame;
-	tSPI_Transfer.rx_buf = (unsigned long)pRX_Frame;
-	tSPI_Transfer.len = unFrameLength;
+	unRF905_SPI_TX_Frame[0] = unCMD;
+	memcpy(unRF905_SPI_TX_Frame + 1, pTX_Frame, unFrameLength);
+	tSPI_Transfer.tx_buf = (unsigned long)unRF905_SPI_TX_Frame;
+	tSPI_Transfer.rx_buf = (unsigned long)unRF905_SPI_RX_Frame;
+	tSPI_Transfer.len = unFrameLength + 1;
 	tSPI_Transfer.delay_usecs = unSPI_Delay;
 	tSPI_Transfer.speed_hz = unSPI_Speed;
 	tSPI_Transfer.bits_per_word = unSPI_Bits;
@@ -88,35 +90,48 @@ static int32_t nRF905_SPI_WR(int32_t nRF905SPIfd, uint8_t* pTX_Frame, uint8_t un
 	}
 
 	if (ioctl(nRF905SPIfd, SPI_IOC_MESSAGE(1), &tSPI_Transfer) < 1){
-		free(pRX_Frame);
 		NRF905D_LOG_ERR("can't send spi message");
 		return (-1);
 	}
-	free(pRX_Frame);
 	return 0;
 }
 
-static int32_t nRF905_SPI_READ(int32_t nRF905SPIfd, uint8_t* pTX_Frame, uint8_t* pRX_Frame, uint8_t unFrameLength)
+static uint8_t* nRF905_SPI_READ(int32_t nRF905SPIfd, uint8_t unCMD, uint8_t* pRX_Frame, uint8_t unFrameLength)
 {
+	static uint8_t unRF905_SPI_TX_Frame[NRF905_RX_PAYLOAD_LEN + 1];
+	static uint8_t unRF905_SPI_RX_Frame[NRF905_RX_PAYLOAD_LEN + 1];
 	struct spi_ioc_transfer tSPI_Transfer;
 
-	tSPI_Transfer.tx_buf = (unsigned long)pTX_Frame;
-	tSPI_Transfer.rx_buf = (unsigned long)pRX_Frame;
-	tSPI_Transfer.len = unFrameLength;
+	if (unFrameLength > NRF905_RX_PAYLOAD_LEN){
+		NRF905D_LOG_ERR("The frame need to read from nRF905 is too long.");
+		return NULL;
+	}
+	unRF905_SPI_TX_Frame[0] = unCMD;
+	tSPI_Transfer.tx_buf = (unsigned long)unRF905_SPI_TX_Frame;
+	if (NULL == pRX_Frame){
+		tSPI_Transfer.rx_buf = (unsigned long)unRF905_SPI_RX_Frame;
+	}else{
+		tSPI_Transfer.rx_buf = (unsigned long)pRX_Frame;
+	}
+	tSPI_Transfer.len = unFrameLength + 1;
 	tSPI_Transfer.delay_usecs = unSPI_Delay;
 	tSPI_Transfer.speed_hz = unSPI_Speed;
 	tSPI_Transfer.bits_per_word = unSPI_Bits;
 
 	if (setNRF905Mode(NRF905_MODE_STD_BY) < 0){
 		NRF905D_LOG_ERR("Set nRF905 mode failed");
-		return (-1);
+		return NULL;
 	}
 
 	if (ioctl(nRF905SPIfd, SPI_IOC_MESSAGE(1), &tSPI_Transfer) < 1){
 		NRF905D_LOG_ERR("can't send spi message");
-		return -1;
+		return NULL;
 	}
-	return 0;
+	if (NULL == pRX_Frame){
+		return unRF905_SPI_RX_Frame;
+	}else{
+		return pRX_Frame;
+	}
 }
 
 static nRF905Boolean_t bIsCarrierDetected(void)
@@ -145,32 +160,20 @@ static int32_t nGetAddrFromCH_NO(uint16_t unChannelNumber, uint8_t* pRX_Address)
 
 static int32_t nRF905CR_Initial(int32_t nRF905SPIfd)
 {
-	uint8_t* pTXwCMD;
 	uint8_t* pRXwStatus;
 	uint32_t unIndex;
 
-	pTXwCMD = malloc(ARRAY_SIZE(NRF905_CR_DEFAULT) + 1);
-	if (NULL == pTXwCMD){
-		NRF905D_LOG_ERR("nRF905CR_Initial failed because of no TX RAM.");
-		return (-1);
-	}
-	pTXwCMD[0] = NRF905_CMD_WC(0);
-	memcpy(pTXwCMD + 1, NRF905_CR_DEFAULT, ARRAY_SIZE(NRF905_CR_DEFAULT));
-	if (nRF905_SPI_WR(nRF905SPIfd, pTXwCMD, ARRAY_SIZE(NRF905_CR_DEFAULT) + 1) < 0){
-		free(pTXwCMD);
+	if (nRF905_SPI_WR(nRF905SPIfd, NRF905_CMD_WC(0), NRF905_CR_DEFAULT, ARRAY_SIZE(NRF905_CR_DEFAULT)) < 0){
 		NRF905D_LOG_ERR("nRF905 control register initialization failed at nRF905 TX.");
 		return -1;
 	}
 	nGetAddrFromCH_NO(NRF905_CR_DEFAULT[0] | ((uint16_t)(NRF905_CR_DEFAULT[1] & 0x01) << 8), (uint8_t*)(&(tRemoteControlMap.unNRF905RX_Address)));
 	pRXwStatus = malloc(ARRAY_SIZE(NRF905_CR_DEFAULT) + 1);
 	if (NULL == pRXwStatus){
-		free(pTXwCMD);
 		NRF905D_LOG_ERR("nRF905CR_Initial failed because of no RX RAM.");
 		return (-1);
 	}
-	pTXwCMD[0] = NRF905_CMD_RC(0);
-	if (nRF905_SPI_READ(nRF905SPIfd, pTXwCMD, pRXwStatus, ARRAY_SIZE(NRF905_CR_DEFAULT) + 1) < 0){
-		free(pTXwCMD);
+	if (nRF905_SPI_READ(nRF905SPIfd, NRF905_CMD_RC(0), pRXwStatus, ARRAY_SIZE(NRF905_CR_DEFAULT)) < 0){
 		free(pRXwStatus);
 		NRF905D_LOG_ERR("nRF905 control register initialization failed at nRF905 RX.");
 		return -1;
@@ -179,12 +182,10 @@ static int32_t nRF905CR_Initial(int32_t nRF905SPIfd)
 		printf("0x%02X\n", pRXwStatus[unIndex]);
 	}
 	if (memcmp(pRXwStatus + 1, NRF905_CR_DEFAULT, ARRAY_SIZE(NRF905_CR_DEFAULT)) != 0){
-		free(pTXwCMD);
 		free(pRXwStatus);
 		NRF905D_LOG_ERR("nRF905 control register initialization failed at comparing CR value.");
 		return -1;
 	}
-	free(pTXwCMD);
 	free(pRXwStatus);
 	return 0;
 }
@@ -237,7 +238,7 @@ static int32_t nSetNRF905FrqPwr(int32_t nRF905SPI_Fd, uint16_t unFrqPwr)
 {
 //	uint8_t unSPI_WR_Data[5];
 	unFrqPwr = NRF905_CMD_CC(unFrqPwr);
-	if (nRF905_SPI_WR(nRF905SPI_Fd, (uint8_t*)(&unFrqPwr), 2) < 0){
+	if (nRF905_SPI_WR(nRF905SPI_Fd, unFrqPwr >> 8, (uint8_t*)(&unFrqPwr), 1) < 0){
 		NRF905D_LOG_ERR("Set nRF905's frequency and power failed.");
 		return (-1);
 	}
@@ -259,13 +260,12 @@ uint64_t getTimeDiffInUs(struct timeval tLastTime, struct timeval tCurrentTime)
 
 static int32_t nRF905ReceiveFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905CommTask, uint32_t unNRF905RX_Address)
 {
-	uint8_t unSPI_WR_RX_AddressFrame[NRF905_RX_ADDR_LEN + 1];
-	uint8_t unSPI_RD_RX_PayloadFrame[NRF905_RX_PAYLOAD_LEN + 1];
 	struct timeval tLastTime, tCurrentTime;
-
-	unSPI_WR_RX_AddressFrame[0] = NRF905_CMD_WC(NRF905_RX_ADDRESS_IN_CR);
-	memcpy(unSPI_WR_RX_AddressFrame + 1, &unNRF905RX_Address, NRF905_RX_ADDR_LEN);
-	if (nRF905_SPI_WR(nRF905SPI_Fd, unSPI_WR_RX_AddressFrame, NRF905_RX_ADDR_LEN + 1) < 0){
+	if (NULL == tNRF905CommTask.pRX_Frame){
+		NRF905D_LOG_ERR("No place to save received frame.");
+		return (-1);
+	}
+	if (nRF905_SPI_WR(nRF905SPI_Fd, NRF905_CMD_WC(NRF905_RX_ADDRESS_IN_CR), (uint8_t *)(&unNRF905RX_Address), NRF905_RX_ADDR_LEN) < 0){
 		NRF905D_LOG_ERR("Set RX address error.");
 		return (-1);
 	}else{
@@ -315,8 +315,7 @@ static int32_t nRF905ReceiveFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905
 		}
 
 		// start SPI read RX payload from nRF905
-		unSPI_RD_RX_PayloadFrame[0] = NRF905_CMD_RRP;
-		if (nRF905_SPI_READ(nRF905SPI_Fd, unSPI_RD_RX_PayloadFrame, tNRF905CommTask.pRX_Frame, NRF905_RX_ADDR_LEN + 1) < 0){
+		if (nRF905_SPI_READ(nRF905SPI_Fd, NRF905_CMD_RRP, tNRF905CommTask.pRX_Frame, NRF905_RX_ADDR_LEN) < 0){
 			NRF905D_LOG_ERR("Read RX payload from nRF905 failed.");
 			return (-1);
 		}
@@ -327,20 +326,14 @@ static int32_t nRF905ReceiveFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905
 
 static int32_t nRF905SendFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905CommTask, uint32_t unNRF905TX_Address)
 {
-	uint8_t unSPI_WR_TX_AddressFrame[NRF905_TX_ADDR_LEN + 1];
-	uint8_t unSPI_WR_TX_PayloadFrame[NRF905_TX_PAYLOAD_LEN + 1];
 	struct timeval tLastTime, tCurrentTime;
 
 	NRF905D_LOG_INFO("nRF905 start send frame.");
-	unSPI_WR_TX_AddressFrame[0] = NRF905_CMD_WTA;
-	memcpy(unSPI_WR_TX_AddressFrame + 1, &unNRF905TX_Address, NRF905_TX_ADDR_LEN);
-	if (nRF905_SPI_WR(nRF905SPI_Fd, unSPI_WR_TX_AddressFrame, NRF905_TX_ADDR_LEN + 1) < 0){
+	if (nRF905_SPI_WR(nRF905SPI_Fd, NRF905_CMD_WTA, (uint8_t*)(&unNRF905TX_Address), NRF905_TX_ADDR_LEN) < 0){
 		NRF905D_LOG_ERR("Set TX address error.");
 		return (-1);
 	}else{
-		unSPI_WR_TX_PayloadFrame[0] = NRF905_CMD_WTP;
-		memcpy(unSPI_WR_TX_PayloadFrame + 1, tNRF905CommTask.pTX_Frame, NRF905_TX_PAYLOAD_LEN);
-		if (nRF905_SPI_WR(nRF905SPI_Fd, unSPI_WR_TX_PayloadFrame, NRF905_TX_PAYLOAD_LEN + 1) < 0){
+		if (nRF905_SPI_WR(nRF905SPI_Fd, NRF905_CMD_WTP, tNRF905CommTask.pTX_Frame, NRF905_TX_PAYLOAD_LEN) < 0){
 			NRF905D_LOG_ERR("Write TX payload error.");
 			return (-1);
 		}else{
@@ -380,7 +373,8 @@ static int32_t nRF905SendFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905Com
 
 static int32_t nRF905Hopping(int32_t nRF905SPI_Fd)
 {
-	uint32_t unCD_RetryCNT;
+//	uint32_t unCD_RetryCNT;
+	uint32_t unTX_RetryCNT;
 	uint32_t unHoppingTableIndex;
 	nRF905CommTask_t tNRF905HoppingTask;
 	static uint8_t unHoppingPayload[NRF905_TX_PAYLOAD_LEN] = {0xA5, 0xA5, 0xDC, 0xCD, };
@@ -395,11 +389,7 @@ static int32_t nRF905Hopping(int32_t nRF905SPI_Fd)
 			NRF905D_LOG_ERR("Can not set nRF905's frequency and power.");
 			continue;
 		}else{
-			if (setNRF905Mode(NRF905_MODE_BURST_RX) < 0){
-				NRF905D_LOG_ERR("Set nRF905 mode error during hopping.");
-				continue;
-			}
-			for (unCD_RetryCNT = 0; unCD_RetryCNT < HOPPING_MAX_CD_RETRY_NUM; unCD_RetryCNT++){
+			for (unTX_RetryCNT = 0; unTX_RetryCNT < HOPPING_MAX_TX_RETRY_NUM; unTX_RetryCNT++){
 				if (bIsCarrierDetected() == NRF905_TRUE){
 					if (nRF905SendFrame(nRF905SPI_Fd, tNRF905HoppingTask, tRemoteControlMap.unNRF905RX_Address) < 0){
 						NRF905D_LOG_ERR("Carrier detected, but send frame error. Try next channel.");
@@ -410,9 +400,27 @@ static int32_t nRF905Hopping(int32_t nRF905SPI_Fd)
 						return 0;
 					}
 				}else{
-					usleep(CD_RETRY_DELAY_US);
+					usleep(HOPPING_TX_RETRY_DELAY_US);
 				}
 			}
+//			if (setNRF905Mode(NRF905_MODE_BURST_RX) < 0){
+//				NRF905D_LOG_ERR("Set nRF905 mode error during hopping.");
+//				continue;
+//			}
+//			for (unCD_RetryCNT = 0; unCD_RetryCNT < HOPPING_MAX_CD_RETRY_NUM; unCD_RetryCNT++){
+//				if (bIsCarrierDetected() == NRF905_TRUE){
+//					if (nRF905SendFrame(nRF905SPI_Fd, tNRF905HoppingTask, tRemoteControlMap.unNRF905RX_Address) < 0){
+//						NRF905D_LOG_ERR("Carrier detected, but send frame error. Try next channel.");
+//						break;
+//					}else{
+//						NRF905D_LOG_INFO("Hopping success, %u was used as parameter.", tRemoteControlMap.unNRF905RX_Address);
+//						tRemoteControlMap.unNRF905CommSendFrameErr = 0;
+//						return 0;
+//					}
+//				}else{
+//					usleep(CD_RETRY_DELAY_US);
+//				}
+//			}
 		}
 	}
 	NRF905D_LOG_INFO("Hopping failed.");
