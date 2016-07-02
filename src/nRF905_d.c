@@ -96,7 +96,7 @@ static int32_t nRF905_SPI_WR(int32_t nRF905SPIfd, uint8_t unCMD, uint8_t* pTX_Fr
 	return 0;
 }
 
-static uint8_t* nRF905_SPI_READ(int32_t nRF905SPIfd, uint8_t unCMD, uint8_t* pRX_Frame, uint8_t unFrameLength)
+static uint8_t* nRF905_SPI_RD(int32_t nRF905SPIfd, uint8_t unCMD, uint8_t* pRX_Frame, uint8_t unFrameLength)
 {
 	static uint8_t unRF905_SPI_TX_Frame[NRF905_RX_PAYLOAD_LEN + 1];
 	static uint8_t unRF905_SPI_RX_Frame[NRF905_RX_PAYLOAD_LEN + 1];
@@ -168,13 +168,8 @@ static int32_t nRF905CR_Initial(int32_t nRF905SPIfd)
 		return -1;
 	}
 	nGetAddrFromCH_NO(NRF905_CR_DEFAULT[0] | ((uint16_t)(NRF905_CR_DEFAULT[1] & 0x01) << 8), (uint8_t*)(&(tRemoteControlMap.unNRF905RX_Address)));
-	pRXwStatus = malloc(ARRAY_SIZE(NRF905_CR_DEFAULT) + 1);
+	pRXwStatus = nRF905_SPI_RD(nRF905SPIfd, NRF905_CMD_RC(0), NULL, ARRAY_SIZE(NRF905_CR_DEFAULT));
 	if (NULL == pRXwStatus){
-		NRF905D_LOG_ERR("nRF905CR_Initial failed because of no RX RAM.");
-		return (-1);
-	}
-	if (nRF905_SPI_READ(nRF905SPIfd, NRF905_CMD_RC(0), pRXwStatus, ARRAY_SIZE(NRF905_CR_DEFAULT)) < 0){
-		free(pRXwStatus);
 		NRF905D_LOG_ERR("nRF905 control register initialization failed at nRF905 RX.");
 		return -1;
 	}
@@ -182,11 +177,9 @@ static int32_t nRF905CR_Initial(int32_t nRF905SPIfd)
 		printf("0x%02X\n", pRXwStatus[unIndex]);
 	}
 	if (memcmp(pRXwStatus + 1, NRF905_CR_DEFAULT, ARRAY_SIZE(NRF905_CR_DEFAULT)) != 0){
-		free(pRXwStatus);
 		NRF905D_LOG_ERR("nRF905 control register initialization failed at comparing CR value.");
 		return -1;
 	}
-	free(pRXwStatus);
 	return 0;
 }
 
@@ -315,7 +308,7 @@ static int32_t nRF905ReceiveFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905
 		}
 
 		// start SPI read RX payload from nRF905
-		if (nRF905_SPI_READ(nRF905SPI_Fd, NRF905_CMD_RRP, tNRF905CommTask.pRX_Frame, NRF905_RX_ADDR_LEN) < 0){
+		if (nRF905_SPI_RD(nRF905SPI_Fd, NRF905_CMD_RRP, tNRF905CommTask.pRX_Frame, NRF905_RX_ADDR_LEN) == NULL){
 			NRF905D_LOG_ERR("Read RX payload from nRF905 failed.");
 			return (-1);
 		}
