@@ -360,35 +360,33 @@ static int32_t nRF905SendFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905Com
 	return 0;
 }
 
-static int32_t nRF905Hopping(int32_t nRF905SPI_Fd)
+static int32_t nRF905Hopping(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905CommTask)
 {
 //	uint32_t unCD_RetryCNT;
 	uint32_t unTX_RetryCNT;
-	uint32_t unHoppingTableIndex;
-	nRF905CommTask_t tNRF905HoppingTask;
-	static uint8_t unHoppingPayload[NRF905_TX_PAYLOAD_LEN] = {0xA5, 0xA5, 0xDC, 0xCD, };
+	static uint8_t unHoppingTableIndex = 0;
 
 	NRF905D_LOG_INFO("Hopping procedure start.");
-	tNRF905HoppingTask.tCommType = NRF905_COMM_TYPE_TX_PKG;
-	tNRF905HoppingTask.unCommByteNum = NRF905_TX_PAYLOAD_LEN;
-	tNRF905HoppingTask.pTX_Frame = unHoppingPayload;
 
 	for (unTX_RetryCNT = 0; unTX_RetryCNT < HOPPING_MAX_RETRY_NUM; unTX_RetryCNT++){
-		for (unHoppingTableIndex = 0; unHoppingTableIndex < ARRAY_SIZE(unRF_HOPPING_TABLE); unHoppingTableIndex++){
-			if (nSetNRF905ChnPwr(nRF905SPI_Fd, unRF_HOPPING_TABLE[unHoppingTableIndex]) < 0){
-				NRF905D_LOG_ERR("Can not set nRF905's frequency and power.");
-				continue;
+		if (unHoppingTableIndex < (ARRAY_SIZE(unRF_HOPPING_TABLE) - 1)){
+			unHoppingTableIndex++;
+		}else{
+			unHoppingTableIndex = 0;
+		}
+		if (nSetNRF905ChnPwr(nRF905SPI_Fd, unRF_HOPPING_TABLE[unHoppingTableIndex]) < 0){
+			NRF905D_LOG_ERR("Can not set nRF905's frequency and power.");
+			continue;
+		}else{
+			if (nRF905SendFrame(nRF905SPI_Fd, tNRF905CommTask) < 0){
+				NRF905D_LOG_ERR("Send frame error during hopping. Try next channel.");
+				break;
 			}else{
-				if (nRF905SendFrame(nRF905SPI_Fd, tNRF905HoppingTask) < 0){
-					NRF905D_LOG_ERR("Send frame error during hopping. Try next channel.");
-					break;
-				}else{
-					NRF905D_LOG_INFO("Hopping success, %u was used as parameter.", tRemoteControlMap.unNRF905RX_Address);
-					tRemoteControlMap.unNRF905CommSendFrameErr = 0;
-					return 0;
-				}
-				usleep(HOPPING_TX_RETRY_DELAY_US);
+				NRF905D_LOG_INFO("Hopping success, %u was used as parameter.", tRemoteControlMap.unNRF905RX_Address);
+				tRemoteControlMap.unNRF905CommSendFrameErr = 0;
+				return 0;
 			}
+			usleep(HOPPING_TX_RETRY_DELAY_US);
 		}
 	}
 	NRF905D_LOG_INFO("Hopping failed.");
@@ -401,16 +399,13 @@ static int32_t nNRF905ExecuteTask(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905
 		NRF905D_LOG_ERR("nRF905 send frame error, start hopping.");
 		tRemoteControlMap.unNRF905CommSendFrameErr++;
 		tRemoteControlMap.unNRF905CommSendFrameErrTotal++;
-		if (nRF905Hopping(nRF905SPI_Fd) < 0){
+		if (nRF905Hopping(nRF905SPI_Fd, tNRF905CommTask) < 0){
 			NRF905D_LOG_ERR("Can not find any valid receiver in air.");
 			return (-1);
 		}else{
-			if (nRF905SendFrame(nRF905SPI_Fd, tNRF905CommTask) < 0){
-				NRF905D_LOG_ERR("WTF, hopping OK but normal frame can not be sent out?");
-				return (-1);
-			}else{
-				return 0;
-			}
+			tRemoteControlMap.unNRF905CommSendFrameErr = 0;
+			tRemoteControlMap.unNRF905CommSendFrameOK++;
+			return 0;
 		}
 	}else{
 		tRemoteControlMap.unNRF905CommSendFrameErr = 0;
