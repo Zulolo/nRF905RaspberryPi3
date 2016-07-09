@@ -227,7 +227,7 @@ int32_t nRF905SpiInitial(int32_t nRF905SPIfd)
 	return 0;
 }
 
-static int32_t nSetNRF905FrqPwr(int32_t nRF905SPI_Fd, uint16_t unFrqPwr)
+static int32_t nSetNRF905ChnPwr(int32_t nRF905SPI_Fd, uint16_t unFrqPwr)
 {
 //	uint8_t unSPI_WR_Data[5];
 	unFrqPwr = NRF905_CMD_CC(unFrqPwr);
@@ -237,12 +237,16 @@ static int32_t nSetNRF905FrqPwr(int32_t nRF905SPI_Fd, uint16_t unFrqPwr)
 	}
 	tRemoteControlMap.unNRF905ChNoAndPwr = unFrqPwr;
 	nGetAddrFromCH_NO(unFrqPwr & CH_MSK_IN_CC_REG, (uint8_t*)(&(tRemoteControlMap.unNRF905RX_Address)));
-//	unSPI_WR_Data[0] = NRF905_CMD_WC(NRF905_RX_ADDRESS_IN_CR);
-//	memcpy(unSPI_WR_Data + 1, unNRF905RX_AddressGlobal, 4);
-//	if (nRF905_SPI_WR(nRF905SPI_Fd, unSPI_WR_Data, 5) < 0){
-//		NRF905D_LOG_ERR("Set nRF905's RX address in CR failed.");
-//		return (-1);
-//	}
+	if (nRF905_SPI_WR(nRF905SPI_Fd, NRF905_CMD_WC(NRF905_RX_ADDRESS_IN_CR),
+			(uint8_t*)(&(tRemoteControlMap.unNRF905RX_Address)), NRF905_RX_ADDR_LEN) < 0){
+		NRF905D_LOG_ERR("Set nRF905's RX address in CR failed.");
+		return (-1);
+	}
+	if (nRF905_SPI_WR(nRF905SPI_Fd, NRF905_CMD_WTA,
+			(uint8_t*)(&(tRemoteControlMap.unNRF905RX_Address)), NRF905_TX_ADDR_LEN) < 0){
+		NRF905D_LOG_ERR("Set nRF905's TX address in CR failed.");
+		return (-1);
+	}
 	return 0;
 }
 
@@ -251,113 +255,105 @@ uint64_t getTimeDiffInUs(struct timeval tLastTime, struct timeval tCurrentTime)
 	return abs(tCurrentTime.tv_usec - tLastTime.tv_usec + (tCurrentTime.tv_usec - tLastTime.tv_usec) * US_PER_SECONDE);
 }
 
-static int32_t nRF905ReceiveFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905CommTask, uint32_t unNRF905RX_Address)
+static int32_t nRF905ReceiveFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905CommTask)
 {
 	struct timeval tLastTime, tCurrentTime;
 	if (NULL == tNRF905CommTask.pRX_Frame){
 		NRF905D_LOG_ERR("No place to save received frame.");
 		return (-1);
 	}
-	if (nRF905_SPI_WR(nRF905SPI_Fd, NRF905_CMD_WC(NRF905_RX_ADDRESS_IN_CR), (uint8_t *)(&unNRF905RX_Address), NRF905_RX_ADDR_LEN) < 0){
-		NRF905D_LOG_ERR("Set RX address error.");
-		return (-1);
-	}else{
-		// Start listen
-		setNRF905Mode(NRF905_MODE_BURST_RX);
-		// delay until CD set with timeout
-		gettimeofday(&tLastTime, NULL);
-		gettimeofday(&tCurrentTime, NULL);
-		while (getTimeDiffInUs(tLastTime, tCurrentTime) < AFTER_SET_BURST_RX_MAX_CD_DELAY_US){
-			if (bIsCarrierDetected() == NRF905_TRUE){
-				break;
-			}
-			gettimeofday(&tCurrentTime, NULL);
-		}
-		if (getTimeDiffInUs(tLastTime, tCurrentTime) >= AFTER_SET_BURST_RX_MAX_CD_DELAY_US){
-			setNRF905Mode(NRF905_MODE_STD_BY);
-			NRF905D_LOG_ERR("Detect carrier failed.");
-			return (-1);
-		}
-		// delay until AM set with timeout
-		gettimeofday(&tLastTime, NULL);
-		gettimeofday(&tCurrentTime, NULL);
-		while (getTimeDiffInUs(tLastTime, tCurrentTime) < AFTER_CD_MAX_AM_DELAY_US){
-			if (bIsAddressMatch() == NRF905_TRUE){
-				break;
-			}
-			gettimeofday(&tCurrentTime, NULL);
-		}
-		if (getTimeDiffInUs(tLastTime, tCurrentTime) >= AFTER_CD_MAX_AM_DELAY_US){
-			setNRF905Mode(NRF905_MODE_STD_BY);
-			NRF905D_LOG_ERR("Address match failed.");
-			return (-1);
-		}
-		// delay until DR set with timeout
-		gettimeofday(&tLastTime, NULL);
-		gettimeofday(&tCurrentTime, NULL);
-		while (getTimeDiffInUs(tLastTime, tCurrentTime) < AFTER_AM_MAX_DR_DELAY_US){
-			if (bIsDataReady() == NRF905_TRUE){
-				break;
-			}
-			gettimeofday(&tCurrentTime, NULL);
-		}
-		if (getTimeDiffInUs(tLastTime, tCurrentTime) >= AFTER_AM_MAX_DR_DELAY_US){
-			setNRF905Mode(NRF905_MODE_STD_BY);
-			NRF905D_LOG_ERR("Address match failed.");
-			return (-1);
-		}
 
-		// start SPI read RX payload from nRF905
-		if (nRF905_SPI_RD(nRF905SPI_Fd, NRF905_CMD_RRP, tNRF905CommTask.pRX_Frame, NRF905_RX_ADDR_LEN) == NULL){
-			NRF905D_LOG_ERR("Read RX payload from nRF905 failed.");
-			return (-1);
+	// Start listen
+	setNRF905Mode(NRF905_MODE_BURST_RX);
+	// delay until CD set with timeout
+	gettimeofday(&tLastTime, NULL);
+	gettimeofday(&tCurrentTime, NULL);
+	while (getTimeDiffInUs(tLastTime, tCurrentTime) < AFTER_SET_BURST_RX_MAX_CD_DELAY_US){
+		if (bIsCarrierDetected() == NRF905_TRUE){
+			break;
 		}
+		gettimeofday(&tCurrentTime, NULL);
+	}
+	if (getTimeDiffInUs(tLastTime, tCurrentTime) >= AFTER_SET_BURST_RX_MAX_CD_DELAY_US){
+		setNRF905Mode(NRF905_MODE_STD_BY);
+		NRF905D_LOG_ERR("Detect carrier failed.");
+		return (-1);
+	}
+	// delay until AM set with timeout
+	gettimeofday(&tLastTime, NULL);
+	gettimeofday(&tCurrentTime, NULL);
+	while (getTimeDiffInUs(tLastTime, tCurrentTime) < AFTER_CD_MAX_AM_DELAY_US){
+		if (bIsAddressMatch() == NRF905_TRUE){
+			break;
+		}
+		gettimeofday(&tCurrentTime, NULL);
+	}
+	if (getTimeDiffInUs(tLastTime, tCurrentTime) >= AFTER_CD_MAX_AM_DELAY_US){
+		setNRF905Mode(NRF905_MODE_STD_BY);
+		NRF905D_LOG_ERR("Address match failed.");
+		return (-1);
+	}
+	// delay until DR set with timeout
+	gettimeofday(&tLastTime, NULL);
+	gettimeofday(&tCurrentTime, NULL);
+	while (getTimeDiffInUs(tLastTime, tCurrentTime) < AFTER_AM_MAX_DR_DELAY_US){
+		if (bIsDataReady() == NRF905_TRUE){
+			break;
+		}
+		gettimeofday(&tCurrentTime, NULL);
+	}
+	if (getTimeDiffInUs(tLastTime, tCurrentTime) >= AFTER_AM_MAX_DR_DELAY_US){
+		setNRF905Mode(NRF905_MODE_STD_BY);
+		NRF905D_LOG_ERR("Address match failed.");
+		return (-1);
+	}
+
+	// start SPI read RX payload from nRF905
+	if (nRF905_SPI_RD(nRF905SPI_Fd, NRF905_CMD_RRP, tNRF905CommTask.pRX_Frame, NRF905_RX_ADDR_LEN) == NULL){
+		NRF905D_LOG_ERR("Read RX payload from nRF905 failed.");
+		return (-1);
 	}
 
 	return 0;
 }
 
-static int32_t nRF905SendFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905CommTask, uint32_t unNRF905TX_Address)
+static int32_t nRF905SendFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905CommTask)
 {
 	struct timeval tLastTime, tCurrentTime;
 
 	NRF905D_LOG_INFO("nRF905 start send frame.");
-	if (nRF905_SPI_WR(nRF905SPI_Fd, NRF905_CMD_WTA, (uint8_t*)(&unNRF905TX_Address), NRF905_TX_ADDR_LEN) < 0){
-		NRF905D_LOG_ERR("Set TX address error.");
+
+	if (nRF905_SPI_WR(nRF905SPI_Fd, NRF905_CMD_WTP, tNRF905CommTask.pTX_Frame, NRF905_TX_PAYLOAD_LEN) < 0){
+		NRF905D_LOG_ERR("Write TX payload error.");
 		return (-1);
 	}else{
-		if (nRF905_SPI_WR(nRF905SPI_Fd, NRF905_CMD_WTP, tNRF905CommTask.pTX_Frame, NRF905_TX_PAYLOAD_LEN) < 0){
-			NRF905D_LOG_ERR("Write TX payload error.");
-			return (-1);
-		}else{
-			// TX payload was successfully written into nRF905's register
-			// Start transmit
-			setNRF905Mode(NRF905_MODE_BURST_TX);
-			// delay until DR set with timeout
-			gettimeofday(&tLastTime, NULL);
+		// TX payload was successfully written into nRF905's register
+		// Start transmit
+		setNRF905Mode(NRF905_MODE_BURST_TX);
+		// delay until DR set with timeout
+		gettimeofday(&tLastTime, NULL);
+		gettimeofday(&tCurrentTime, NULL);
+		while (getTimeDiffInUs(tLastTime, tCurrentTime) < AFTER_SET_BURST_TX_MAX_DELAY_US){
+			if (bIsDataReady() == NRF905_TRUE){
+				break;
+			}
 			gettimeofday(&tCurrentTime, NULL);
-			while (getTimeDiffInUs(tLastTime, tCurrentTime) < AFTER_SET_BURST_TX_MAX_DELAY_US){
-				if (bIsDataReady() == NRF905_TRUE){
-					break;
-				}
-				gettimeofday(&tCurrentTime, NULL);
-			}
-			if (getTimeDiffInUs(tLastTime, tCurrentTime) >= AFTER_SET_BURST_TX_MAX_DELAY_US){
-				setNRF905Mode(NRF905_MODE_STD_BY);
-				NRF905D_LOG_ERR("Data transmit failed.");
-				return (-1);
-			}
-			// start to read response
-			if (nRF905ReceiveFrame(nRF905SPI_Fd, tNRF905CommTask, unNRF905TX_Address) < 0){
-				NRF905D_LOG_ERR("Data receive failed.");
-				return (-1);
-			}
-			// If receive OK, frame was saved in the tNRF905CommTask.pRX_Frame
+		}
+		if (getTimeDiffInUs(tLastTime, tCurrentTime) >= AFTER_SET_BURST_TX_MAX_DELAY_US){
 			setNRF905Mode(NRF905_MODE_STD_BY);
-			if (memcmp(tNRF905CommTask.pTX_Frame, tNRF905CommTask.pRX_Frame + 1, tNRF905CommTask.unCommByteNum) != 0){
-				NRF905D_LOG_ERR("The received frame is different with sent one.");
-				return (-1);
-			}
+			NRF905D_LOG_ERR("Data transmit failed.");
+			return (-1);
+		}
+		// start to read response
+		if (nRF905ReceiveFrame(nRF905SPI_Fd, tNRF905CommTask) < 0){
+			NRF905D_LOG_ERR("Data receive failed.");
+			return (-1);
+		}
+		// If receive OK, frame was saved in the tNRF905CommTask.pRX_Frame
+		setNRF905Mode(NRF905_MODE_STD_BY);
+		if (memcmp(tNRF905CommTask.pTX_Frame, tNRF905CommTask.pRX_Frame + 1, tNRF905CommTask.unCommByteNum) != 0){
+			NRF905D_LOG_ERR("The received frame is different with sent one.");
+			return (-1);
 		}
 	}
 
@@ -377,43 +373,22 @@ static int32_t nRF905Hopping(int32_t nRF905SPI_Fd)
 	tNRF905HoppingTask.unCommByteNum = NRF905_TX_PAYLOAD_LEN;
 	tNRF905HoppingTask.pTX_Frame = unHoppingPayload;
 
-	for (unHoppingTableIndex = 0; unHoppingTableIndex < ARRAY_SIZE(unRF_HOPPING_TABLE); unHoppingTableIndex++){
-		if (nSetNRF905FrqPwr(nRF905SPI_Fd, unRF_HOPPING_TABLE[unHoppingTableIndex]) < 0){
-			NRF905D_LOG_ERR("Can not set nRF905's frequency and power.");
-			continue;
-		}else{
-			for (unTX_RetryCNT = 0; unTX_RetryCNT < HOPPING_MAX_TX_RETRY_NUM; unTX_RetryCNT++){
-				if (bIsCarrierDetected() == NRF905_TRUE){
-					if (nRF905SendFrame(nRF905SPI_Fd, tNRF905HoppingTask, tRemoteControlMap.unNRF905RX_Address) < 0){
-						NRF905D_LOG_ERR("Carrier detected, but send frame error. Try next channel.");
-						break;
-					}else{
-						NRF905D_LOG_INFO("Hopping success, %u was used as parameter.", tRemoteControlMap.unNRF905RX_Address);
-						tRemoteControlMap.unNRF905CommSendFrameErr = 0;
-						return 0;
-					}
+	for (unTX_RetryCNT = 0; unTX_RetryCNT < HOPPING_MAX_RETRY_NUM; unTX_RetryCNT++){
+		for (unHoppingTableIndex = 0; unHoppingTableIndex < ARRAY_SIZE(unRF_HOPPING_TABLE); unHoppingTableIndex++){
+			if (nSetNRF905ChnPwr(nRF905SPI_Fd, unRF_HOPPING_TABLE[unHoppingTableIndex]) < 0){
+				NRF905D_LOG_ERR("Can not set nRF905's frequency and power.");
+				continue;
+			}else{
+				if (nRF905SendFrame(nRF905SPI_Fd, tNRF905HoppingTask) < 0){
+					NRF905D_LOG_ERR("Send frame error during hopping. Try next channel.");
+					break;
 				}else{
-					usleep(HOPPING_TX_RETRY_DELAY_US);
+					NRF905D_LOG_INFO("Hopping success, %u was used as parameter.", tRemoteControlMap.unNRF905RX_Address);
+					tRemoteControlMap.unNRF905CommSendFrameErr = 0;
+					return 0;
 				}
+				usleep(HOPPING_TX_RETRY_DELAY_US);
 			}
-//			if (setNRF905Mode(NRF905_MODE_BURST_RX) < 0){
-//				NRF905D_LOG_ERR("Set nRF905 mode error during hopping.");
-//				continue;
-//			}
-//			for (unCD_RetryCNT = 0; unCD_RetryCNT < HOPPING_MAX_CD_RETRY_NUM; unCD_RetryCNT++){
-//				if (bIsCarrierDetected() == NRF905_TRUE){
-//					if (nRF905SendFrame(nRF905SPI_Fd, tNRF905HoppingTask, tRemoteControlMap.unNRF905RX_Address) < 0){
-//						NRF905D_LOG_ERR("Carrier detected, but send frame error. Try next channel.");
-//						break;
-//					}else{
-//						NRF905D_LOG_INFO("Hopping success, %u was used as parameter.", tRemoteControlMap.unNRF905RX_Address);
-//						tRemoteControlMap.unNRF905CommSendFrameErr = 0;
-//						return 0;
-//					}
-//				}else{
-//					usleep(CD_RETRY_DELAY_US);
-//				}
-//			}
 		}
 	}
 	NRF905D_LOG_INFO("Hopping failed.");
@@ -422,71 +397,26 @@ static int32_t nRF905Hopping(int32_t nRF905SPI_Fd)
 
 static int32_t nNRF905ExecuteTask(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905CommTask)
 {
-	nRF905State_t tNRF905State = NRF905_STATE_STDBY;
-	uint32_t unCD_RetryCNT;
-	// Use state machine here to control mode and hopping
-	while(tNRF905State != NRF905_STATE_END){
-		switch(tNRF905State){
-		case NRF905_STATE_STDBY:
-			NRF905D_LOG_INFO("nRF905 standby mode enter.");
-			if (setNRF905Mode(NRF905_MODE_BURST_RX) < 0){
-				NRF905D_LOG_ERR("Set nRF905 mode error during executing task.");
-				return (-1);
-			}
-			for (unCD_RetryCNT = 0; unCD_RetryCNT < EXEC_TSK_MAX_CD_RETRY_NUM; unCD_RetryCNT++){
-				if (bIsCarrierDetected() == NRF905_TRUE){
-					break;
-				}
-				usleep(CD_RETRY_DELAY_US);
-			}
-			if (EXEC_TSK_MAX_CD_RETRY_NUM == unCD_RetryCNT){
-				tNRF905State = NRF905_STATE_NO_CD;
-			}else{
-				tNRF905State = NRF905_STATE_CD;
-			}
-			break;
-
-		case NRF905_STATE_NO_CD:
-			NRF905D_LOG_INFO("nRF905 no carrier detected mode enter.");
-			tNRF905State = NRF905_STATE_HOPPING;
-			break;
-
-		case NRF905_STATE_HOPPING:
-			NRF905D_LOG_INFO("nRF905 hopping mode enter.");
-			if (nRF905Hopping(nRF905SPI_Fd) < 0){
-				NRF905D_LOG_ERR("Can not find any valid carrier in air.");
-				tNRF905State = NRF905_STATE_END;
-			}else{
-				tNRF905State = NRF905_STATE_CD;
-			}
-			break;
-
-		case NRF905_STATE_CD:
-			NRF905D_LOG_INFO("nRF905 carrier detected mode enter.");
-			if (tRemoteControlMap.unNRF905CommSendFrameErr > NRF905_MAX_COMM_ERR_BEFORE_HOPPING){
-				tNRF905State = NRF905_STATE_HOPPING;
-			}else{
-				if (nRF905SendFrame(nRF905SPI_Fd, tNRF905CommTask, tRemoteControlMap.unNRF905RX_Address) < 0){
-					NRF905D_LOG_ERR("nRF905 send frame error.");
-					tRemoteControlMap.unNRF905CommSendFrameErr++;
-					tRemoteControlMap.unNRF905CommSendFrameErrTotal++;
-					tNRF905State = NRF905_STATE_END;
-				}else{
-					tRemoteControlMap.unNRF905CommSendFrameOK++;
-					tNRF905State = NRF905_STATE_END;
-				}
-			}
-
-			break;
-
-		default:
-			NRF905D_LOG_ERR("Invalid nRF905 state");
+	if (nRF905SendFrame(nRF905SPI_Fd, tNRF905CommTask) < 0){
+		NRF905D_LOG_ERR("nRF905 send frame error, start hopping.");
+		tRemoteControlMap.unNRF905CommSendFrameErr++;
+		tRemoteControlMap.unNRF905CommSendFrameErrTotal++;
+		if (nRF905Hopping(nRF905SPI_Fd) < 0){
+			NRF905D_LOG_ERR("Can not find any valid receiver in air.");
 			return (-1);
-			break;
+		}else{
+			if (nRF905SendFrame(nRF905SPI_Fd, tNRF905CommTask) < 0){
+				NRF905D_LOG_ERR("WTF, hopping OK but normal frame can not be sent out?");
+				return (-1);
+			}else{
+				return 0;
+			}
 		}
+	}else{
+		tRemoteControlMap.unNRF905CommSendFrameErr = 0;
+		tRemoteControlMap.unNRF905CommSendFrameOK++;
+		return 0;
 	}
-
-	return 0;
 }
 
 static void* pNRF905Comm(void *ptr)
