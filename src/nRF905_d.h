@@ -77,8 +77,8 @@ typedef enum _nRF905Boolean {
 	#define CD_RETRY_DELAY_US						50
 	#define HOPPING_TX_RETRY_DELAY_US				500
 
-	#define AFTER_SET_BURST_TX_MAX_DELAY_US			5000
-	#define AFTER_SET_BURST_RX_MAX_CD_DELAY_US		10000
+	#define AFTER_SET_BURST_TX_MAX_DELAY_US			50000
+	#define AFTER_SET_BURST_RX_MAX_CD_DELAY_US		50000
 	#define AFTER_CD_MAX_AM_DELAY_US				5000
 	#define AFTER_AM_MAX_DR_DELAY_US				5000
 	#define ROUTINE_TASK_INTERVAL_US				100000
@@ -120,7 +120,7 @@ typedef enum _nRF905Boolean {
 
 	typedef struct _NRF905CommThreadPara{
 		int32_t nTaskReadPipe;
-		int32_t nRF905SPI_Fd;
+		int32_t nBeforeIsRF905SPI_Fd_NowDoNotUse;
 	}nRF905ThreadPara_t;
 
 	// MSB of CH_NO will always be 0
@@ -133,6 +133,8 @@ typedef enum _nRF905Boolean {
 		0x8A,
 		0x01,	// RX address is the calculation result of CH_NO
 		0x0F};	// 16MHz crystal; enable CRC; CRC16
+
+//	static uint8_t NRF905_ACK_FRAME[] =	{0xA5, 0x5A, 1, 2, 3, 4, 5, 6, 7, 8};
 
 	static const uint16_t unRF_HOPPING_TABLE[] = {	0x884C, 0x883A, 0x8846, 0x8832, 0x884A, 0x8835,
 													0x884B, 0x8837, 0x884F, 0x883E, 0x8847, 0x8838,
@@ -154,7 +156,7 @@ typedef enum _nRF905Boolean {
 	static uint8_t unSPI_Mode = SPI_MODE_0;
 	static uint8_t unSPI_Bits = 8;
 	static uint32_t unSPI_Speed = 5000000;
-	static uint16_t unSPI_Delay = 1000;
+	static uint16_t unSPI_Delay = 0;
 	static uint8_t unNeedtoClose = NRF905_FALSE;
 
 #else
