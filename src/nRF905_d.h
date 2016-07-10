@@ -124,15 +124,15 @@ typedef enum _nRF905Boolean {
 	}nRF905ThreadPara_t;
 
 	// MSB of CH_NO will always be 0
-	static uint8_t NRF905_CR_DEFAULT[] =	{0x4C, 0x08,		// F=(422.4+(0x6C<<1)/10)*1; No retransmission; +6db; NOT reduce receive power
+	static uint8_t NRF905_CR_DEFAULT[] =	{0x4C, 0x0C,		// F=(422.4+(0x6C<<1)/10)*1; No retransmission; +6db; NOT reduce receive power
 		(NRF905_RX_ADDR_LEN << 4) | NRF905_TX_ADDR_LEN,	// 4 bytes RX & TX address;
 		NRF905_RX_PAYLOAD_LEN,
 		NRF905_TX_PAYLOAD_LEN, 	// 16 bytes RX & TX package length;
-		0x13,
-		0xEB,
-		0x8A,
-		0x01,	// RX address is the calculation result of CH_NO
-		0x0F};	// 16MHz crystal; enable CRC; CRC16
+		0x00,
+		0x0C,
+		0x40,
+		0x08,	// RX address is the calculation result of CH_NO
+		0x58};	// 16MHz crystal; enable CRC; CRC16
 
 //	static uint8_t NRF905_ACK_FRAME[] =	{0xA5, 0x5A, 1, 2, 3, 4, 5, 6, 7, 8};
 
