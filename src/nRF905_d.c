@@ -94,10 +94,6 @@ static int32_t nRF905_SPI_WR(int32_t nRF905SPIfd, uint8_t unCMD, uint8_t* pTX_Fr
 
 	if (ioctl(nRF905SPIfd, SPI_IOC_MESSAGE(1), &tSPI_Transfer) < 0){
 		printf("Can't send spi message during SPI WR with error code %d. \n", errno);
-//		printf("Can't send spi message during SPI WR with error code %d. "
-//				"Payload length %u, TX buffer %llu, RX buffer %llu, speed %u, bit per word %u, delay %u. \n",
-//				errno, tSPI_Transfer.len, tSPI_Transfer.tx_buf, tSPI_Transfer.rx_buf,
-//				tSPI_Transfer.speed_hz, tSPI_Transfer.bits_per_word, tSPI_Transfer.delay_usecs);
 		NRF905D_LOG_ERR("can't send spi message");
 		return (-1);
 	}
@@ -275,7 +271,7 @@ static int32_t nSetNRF905ChnPwr(int32_t nRF905SPI_Fd, uint16_t unFrqPwr)
 		NRF905D_LOG_ERR("Set nRF905's TX address in CR failed.");
 		return (-1);
 	}
-	printf("nRF905's channel and power was changed to %04X. \n", unFrqPwr);
+	NRF905D_LOG_INFO("nRF905's channel and power was changed to %04X. \n", unFrqPwr);
 	return 0;
 }
 
@@ -291,7 +287,7 @@ static int32_t nRF905ReceiveFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905
 		NRF905D_LOG_ERR("No place to save received frame.");
 		return (-1);
 	}
-	printf("nRF905 start receive frame.\n");
+//	printf("nRF905 start receive frame.\n");
 	// Start listen
 	setNRF905Mode(NRF905_MODE_BURST_RX);
 	// delay until CD set with timeout
@@ -308,6 +304,8 @@ static int32_t nRF905ReceiveFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905
 		NRF905D_LOG_ERR("Detect carrier failed.");
 		return (-1);
 	}
+	printf("Carrier detected.\n");
+
 	// delay until AM set with timeout
 	gettimeofday(&tLastTime, NULL);
 	gettimeofday(&tCurrentTime, NULL);
@@ -322,6 +320,8 @@ static int32_t nRF905ReceiveFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905
 		NRF905D_LOG_ERR("Address match failed.");
 		return (-1);
 	}
+	printf("Address matched.\n");
+
 	// delay until DR set with timeout
 	gettimeofday(&tLastTime, NULL);
 	gettimeofday(&tCurrentTime, NULL);
@@ -333,10 +333,10 @@ static int32_t nRF905ReceiveFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905
 	}
 	if (getTimeDiffInUs(tLastTime, tCurrentTime) >= AFTER_AM_MAX_DR_DELAY_US){
 		setNRF905Mode(NRF905_MODE_STD_BY);
-		NRF905D_LOG_ERR("Address match failed.");
+		NRF905D_LOG_ERR("Data ready timeout.");
 		return (-1);
 	}
-
+	printf("Data ready.\n");
 	// start SPI read RX payload from nRF905
 	if (nRF905_SPI_RD(nRF905SPI_Fd, NRF905_CMD_RRP, tNRF905CommTask.pRX_Frame, NRF905_RX_ADDR_LEN) == NULL){
 		NRF905D_LOG_ERR("Read RX payload from nRF905 failed.");
@@ -349,8 +349,9 @@ static int32_t nRF905ReceiveFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905
 static int32_t nRF905SendFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905CommTask)
 {
 	struct timeval tLastTime, tCurrentTime;
+	uint32_t unIndex;
 
-	printf("nRF905 start send frame.\n");
+//	printf("nRF905 start send frame.\n");
 	NRF905D_LOG_INFO("nRF905 start send frame.");
 
 	if (nRF905_SPI_WR(nRF905SPI_Fd, NRF905_CMD_WTP, tNRF905CommTask.pTX_Frame, NRF905_TX_PAYLOAD_LEN) < 0){
@@ -376,21 +377,25 @@ static int32_t nRF905SendFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905Com
 			NRF905D_LOG_ERR("Data transmit failed.");
 			return (-1);
 		}
-		printf("Payload was successfully sent out by nRF905.\n");
+//		printf("Payload was successfully sent out by nRF905.\n");
 		// start to read response
 		if (nRF905ReceiveFrame(nRF905SPI_Fd, tNRF905CommTask) < 0){
-			printf("Data receive failed.\n");
+//			printf("Data receive failed.\n");
 			NRF905D_LOG_ERR("Data receive failed.");
 			return (-1);
 		}
 		// If receive OK, frame was saved in the tNRF905CommTask.pRX_Frame
 		setNRF905Mode(NRF905_MODE_STD_BY);
+
+		for (unIndex = 0; unIndex < tNRF905CommTask.unCommByteNum; unIndex++){
+			printf("0x%02X\n", tNRF905CommTask.pRX_Frame[unIndex]);
+		}
 		if (memcmp(tNRF905CommTask.pTX_Frame, tNRF905CommTask.pRX_Frame + 1, tNRF905CommTask.unCommByteNum) != 0){
 			NRF905D_LOG_ERR("The received frame is different with sent one.");
 			return (-1);
 		}
 	}
-	printf("One frame was successfully sent out. \n");
+//	printf("One frame was successfully sent out. \n");
 	return 0;
 }
 
@@ -400,7 +405,7 @@ static int32_t nRF905Hopping(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905CommT
 	uint32_t unTX_RetryCNT;
 	static uint8_t unHoppingTableIndex = 0;
 
-	printf("Hopping procedure start.\n");
+//	printf("Hopping procedure start.\n");
 	NRF905D_LOG_INFO("Hopping procedure start.");
 
 	for (unTX_RetryCNT = 0; unTX_RetryCNT < HOPPING_MAX_RETRY_NUM; unTX_RetryCNT++){
@@ -413,13 +418,13 @@ static int32_t nRF905Hopping(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905CommT
 			unHoppingTableIndex = 0;
 		}
 		if (nSetNRF905ChnPwr(nRF905SPI_Fd, unRF_HOPPING_TABLE[unHoppingTableIndex]) < 0){
-			printf("Can not set nRF905's frequency and power. Try next frequency and power. \n");
+//			printf("Can not set nRF905's frequency and power. Try next frequency and power. \n");
 			NRF905D_LOG_ERR("Can not set nRF905's frequency and power.");
 			continue;
 		}else{
-			printf("Change frequency and power OK. Try to send one frame. \n");
+//			printf("Change frequency and power OK. Try to send one frame. \n");
 			if (nRF905SendFrame(nRF905SPI_Fd, tNRF905CommTask) < 0){
-				printf("Try to send one frame failed during hopping. Try next channel.\n");
+//				printf("Try to send one frame failed during hopping. Try next channel.\n");
 				NRF905D_LOG_INFO("Send frame error during hopping. Try next channel.");
 			}else{
 				printf("Hopping success, %u was used as parameter.", tRemoteControlMap.unNRF905RX_Address);
@@ -430,14 +435,14 @@ static int32_t nRF905Hopping(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905CommT
 			usleep(HOPPING_TX_RETRY_DELAY_US);
 		}
 	}
-	printf("Hopping failed. \n");
+//	printf("Hopping failed. \n");
 	NRF905D_LOG_INFO("Hopping failed.");
 	return (-1);
 }
 
 static int32_t nNRF905ExecuteTask(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905CommTask)
 {
-	printf("Start to execute one task.\n");
+//	printf("Start to execute one task.\n");
 	if (nRF905SendFrame(nRF905SPI_Fd, tNRF905CommTask) < 0){
 //		printf("nRF905 execute task error, start hopping.\n");
 //		NRF905D_LOG_ERR("nRF905 execute task error, start hopping.");
@@ -540,9 +545,11 @@ int32_t pRoutineWork(int32_t nTaskPipeFD)
 				// increase some statistic internal variable here
 				NRF905D_LOG_INFO("One ACK task was successfully added into pipe.");
 			}else{
+				printf("Write task communication payload to pipe error with code:%d", errno);
 				NRF905D_LOG_ERR("Write task communication payload to pipe error with code:%d", errno);
 			}
 		}else{
+			printf("Write task communication type to pipe error with code:%d", errno);
 			NRF905D_LOG_ERR("Write task communication type to pipe error with code:%d", errno);
 		}
 		usleep(ROUTINE_TASK_INTERVAL_US);
