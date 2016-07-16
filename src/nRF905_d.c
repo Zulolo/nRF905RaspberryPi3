@@ -103,8 +103,8 @@ static int32_t nRF905_SPI_WR(int32_t nRF905SPIfd, uint8_t unCMD, uint8_t* pTX_Fr
 static uint8_t* nRF905_SPI_RD(int32_t nRF905SPIfd, uint8_t unCMD, uint8_t* pRX_Frame, uint8_t unFrameLength)
 {
 	uint8_t unRF905_SPI_TX_Frame[NRF905_RX_PAYLOAD_LEN + 1];
-	uint8_t unRF905_SPI_RX_Frame[NRF905_RX_PAYLOAD_LEN + 1];
-	static uint8_t unRF905_SPI_RD_RX_Frame[NRF905_RX_PAYLOAD_LEN + 1];
+	static 	uint8_t unRF905_SPI_RX_Frame[NRF905_RX_PAYLOAD_LEN + 1];
+//	static uint8_t unRF905_SPI_RD_RX_Frame[NRF905_RX_PAYLOAD_LEN + 1];
 	struct spi_ioc_transfer tSPI_Transfer;
 
 	if (unFrameLength > NRF905_RX_PAYLOAD_LEN){
@@ -135,8 +135,8 @@ static uint8_t* nRF905_SPI_RD(int32_t nRF905SPIfd, uint8_t unCMD, uint8_t* pRX_F
 		return NULL;
 	}
 	if (NULL == pRX_Frame){
-		memcpy(unRF905_SPI_RD_RX_Frame, unRF905_SPI_RX_Frame, unFrameLength + 1);
-		return unRF905_SPI_RD_RX_Frame;
+//		memcpy(unRF905_SPI_RD_RX_Frame, unRF905_SPI_RX_Frame, unFrameLength + 1);
+		return unRF905_SPI_RX_Frame;
 	}else{
 		return pRX_Frame;
 	}
@@ -290,52 +290,24 @@ static int32_t nRF905ReceiveFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905
 //	printf("nRF905 start receive frame.\n");
 	// Start listen
 	setNRF905Mode(NRF905_MODE_BURST_RX);
-	// delay until CD set with timeout
-	gettimeofday(&tLastTime, NULL);
-	gettimeofday(&tCurrentTime, NULL);
-	while (getTimeDiffInUs(tLastTime, tCurrentTime) < AFTER_SET_BURST_RX_MAX_CD_DELAY_US){
-		if (bIsCarrierDetected() == NRF905_TRUE){
-			break;
-		}
-		gettimeofday(&tCurrentTime, NULL);
-	}
-	if (getTimeDiffInUs(tLastTime, tCurrentTime) >= AFTER_SET_BURST_RX_MAX_CD_DELAY_US){
-		setNRF905Mode(NRF905_MODE_STD_BY);
-		NRF905D_LOG_ERR("Detect carrier failed.");
-		return (-1);
-	}
-	printf("Carrier detected.\n");
 
-	// delay until AM set with timeout
+	// delay until CD, AM and DR set with timeout
 	gettimeofday(&tLastTime, NULL);
 	gettimeofday(&tCurrentTime, NULL);
 	while (getTimeDiffInUs(tLastTime, tCurrentTime) < AFTER_CD_MAX_AM_DELAY_US){
-		if (bIsAddressMatch() == NRF905_TRUE){
+		if ((bIsCarrierDetected() == NRF905_TRUE) &&
+				(bIsAddressMatch() == NRF905_TRUE) &&
+				(bIsDataReady() == NRF905_TRUE)){
 			break;
 		}
 		gettimeofday(&tCurrentTime, NULL);
 	}
 	if (getTimeDiffInUs(tLastTime, tCurrentTime) >= AFTER_CD_MAX_AM_DELAY_US){
 		setNRF905Mode(NRF905_MODE_STD_BY);
-		NRF905D_LOG_ERR("Address match failed.");
+		NRF905D_LOG_ERR("Receive timeout.");
 		return (-1);
 	}
-	printf("Address matched.\n");
 
-	// delay until DR set with timeout
-	gettimeofday(&tLastTime, NULL);
-	gettimeofday(&tCurrentTime, NULL);
-	while (getTimeDiffInUs(tLastTime, tCurrentTime) < AFTER_AM_MAX_DR_DELAY_US){
-		if (bIsDataReady() == NRF905_TRUE){
-			break;
-		}
-		gettimeofday(&tCurrentTime, NULL);
-	}
-	if (getTimeDiffInUs(tLastTime, tCurrentTime) >= AFTER_AM_MAX_DR_DELAY_US){
-		setNRF905Mode(NRF905_MODE_STD_BY);
-		NRF905D_LOG_ERR("Data ready timeout.");
-		return (-1);
-	}
 	printf("Data ready.\n");
 	// start SPI read RX payload from nRF905
 	if (nRF905_SPI_RD(nRF905SPI_Fd, NRF905_CMD_RRP, tNRF905CommTask.pRX_Frame, NRF905_RX_ADDR_LEN) == NULL){
@@ -350,6 +322,8 @@ static int32_t nRF905SendFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905Com
 {
 	struct timeval tLastTime, tCurrentTime;
 	uint32_t unIndex;
+	static uint32_t unSendOutFrame = 0;
+	static uint32_t unResponseFrame = 0;
 
 //	printf("nRF905 start send frame.\n");
 	NRF905D_LOG_INFO("nRF905 start send frame.");
@@ -377,7 +351,10 @@ static int32_t nRF905SendFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905Com
 			NRF905D_LOG_ERR("Data transmit failed.");
 			return (-1);
 		}
-//		printf("Payload was successfully sent out by nRF905.\n");
+		// sleep a while to make sure data has been sent out and no reflect return to receive
+		setNRF905Mode(NRF905_MODE_STD_BY);
+		unSendOutFrame++;
+
 		// start to read response
 		if (nRF905ReceiveFrame(nRF905SPI_Fd, tNRF905CommTask) < 0){
 //			printf("Data receive failed.\n");
@@ -386,7 +363,9 @@ static int32_t nRF905SendFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905Com
 		}
 		// If receive OK, frame was saved in the tNRF905CommTask.pRX_Frame
 		setNRF905Mode(NRF905_MODE_STD_BY);
-
+		unResponseFrame++;
+		printf("Total %u frame has been sent out. \nThe difference between send out and receive is:%d \n",
+				unSendOutFrame, unSendOutFrame - unResponseFrame);
 		for (unIndex = 0; unIndex < tNRF905CommTask.unCommByteNum; unIndex++){
 			printf("0x%02X\n", tNRF905CommTask.pRX_Frame[unIndex]);
 		}
@@ -394,8 +373,9 @@ static int32_t nRF905SendFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905Com
 			NRF905D_LOG_ERR("The received frame is different with sent one.");
 			return (-1);
 		}
+
 	}
-//	printf("One frame was successfully sent out. \n");
+	printf("One frame was successfully sent out. \n");
 	return 0;
 }
 
@@ -533,7 +513,10 @@ int32_t pRoutineWork(int32_t nTaskPipeFD)
 {
 //	nRF905ThreadPara_t tRoutineWorkThreadPara = *((nRF905ThreadPara_t *)ptr);
 	nRF905CommTask_t tNRF905CommTask;
-	static int8_t unACK_Payload[NRF905_TX_PAYLOAD_LEN] = {0xA5, 0xA5, 0xDC, 0xCD, };
+	static int8_t unACK_Payload[NRF905_TX_PAYLOAD_LEN] = {0xA5, 0xA5, 0xDC, 0xCD,
+			0x01, 0x02, 0x03, 0x04,
+			0x05, 0x06, 0x07, 0x08,
+			0x09, 0x0A, 0x0B, 0x0C};
 
 	NRF905D_LOG_INFO("nRoutine work thread start.");
 	tNRF905CommTask.tCommType = NRF905_COMM_TYPE_TX_PKG;
