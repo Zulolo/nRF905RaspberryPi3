@@ -76,6 +76,13 @@ static int32_t nRF905_SPI_WR(int32_t nRF905SPIfd, uint8_t unCMD, uint8_t* pTX_Fr
 		NRF905D_LOG_ERR("The frame need to send to nRF905 is too long.");
 		return (-1);
 	}
+
+	if (setNRF905Mode(NRF905_MODE_STD_BY) < 0){
+		printf("Set nRF905 mode failed.\n");
+		NRF905D_LOG_ERR("Set nRF905 mode failed");
+		return (-1);
+	}
+
 	memset(&tSPI_Transfer, 0, sizeof(struct spi_ioc_transfer));
 	unRF905_SPI_TX_Frame[0] = unCMD;
 	memcpy(unRF905_SPI_TX_Frame + 1, pTX_Frame, unFrameLength);
@@ -85,12 +92,6 @@ static int32_t nRF905_SPI_WR(int32_t nRF905SPIfd, uint8_t unCMD, uint8_t* pTX_Fr
 	tSPI_Transfer.delay_usecs = unSPI_Delay;
 	tSPI_Transfer.speed_hz = unSPI_Speed;
 	tSPI_Transfer.bits_per_word = unSPI_Bits;
-
-	if (setNRF905Mode(NRF905_MODE_STD_BY) < 0){
-		printf("Set nRF905 mode failed.\n");
-		NRF905D_LOG_ERR("Set nRF905 mode failed");
-		return (-1);
-	}
 
 	if (ioctl(nRF905SPIfd, SPI_IOC_MESSAGE(1), &tSPI_Transfer) < 0){
 		printf("Can't send spi message during SPI WR with error code %d. \n", errno);
@@ -103,6 +104,7 @@ static int32_t nRF905_SPI_WR(int32_t nRF905SPIfd, uint8_t unCMD, uint8_t* pTX_Fr
 static uint8_t* nRF905_SPI_RD(int32_t nRF905SPIfd, uint8_t unCMD, uint8_t* pRX_Frame, uint8_t unFrameLength)
 {
 	uint8_t unRF905_SPI_TX_Frame[NRF905_RX_PAYLOAD_LEN + 1];
+//	uint32_t unIndex;
 	static 	uint8_t unRF905_SPI_RX_Frame[NRF905_RX_PAYLOAD_LEN + 1];
 //	static uint8_t unRF905_SPI_RD_RX_Frame[NRF905_RX_PAYLOAD_LEN + 1];
 	struct spi_ioc_transfer tSPI_Transfer;
@@ -111,6 +113,12 @@ static uint8_t* nRF905_SPI_RD(int32_t nRF905SPIfd, uint8_t unCMD, uint8_t* pRX_F
 		NRF905D_LOG_ERR("The frame need to read from nRF905 is too long.");
 		return NULL;
 	}
+
+	if (setNRF905Mode(NRF905_MODE_STD_BY) < 0){
+		NRF905D_LOG_ERR("Set nRF905 mode failed");
+		return NULL;
+	}
+
 	memset(&tSPI_Transfer, 0, sizeof(struct spi_ioc_transfer));
 	unRF905_SPI_TX_Frame[0] = unCMD;
 	tSPI_Transfer.tx_buf = (unsigned long)unRF905_SPI_TX_Frame;
@@ -124,11 +132,6 @@ static uint8_t* nRF905_SPI_RD(int32_t nRF905SPIfd, uint8_t unCMD, uint8_t* pRX_F
 	tSPI_Transfer.speed_hz = unSPI_Speed;
 	tSPI_Transfer.bits_per_word = unSPI_Bits;
 
-	if (setNRF905Mode(NRF905_MODE_STD_BY) < 0){
-		NRF905D_LOG_ERR("Set nRF905 mode failed");
-		return NULL;
-	}
-
 	if (ioctl(nRF905SPIfd, SPI_IOC_MESSAGE(1), &tSPI_Transfer) < 0){
 		printf("Can't send spi message during SPI RD with error code %d. \n", errno);
 		NRF905D_LOG_ERR("can't send spi message");
@@ -138,6 +141,9 @@ static uint8_t* nRF905_SPI_RD(int32_t nRF905SPIfd, uint8_t unCMD, uint8_t* pRX_F
 //		memcpy(unRF905_SPI_RD_RX_Frame, unRF905_SPI_RX_Frame, unFrameLength + 1);
 		return unRF905_SPI_RX_Frame;
 	}else{
+//		for (unIndex = 0; unIndex < unFrameLength; unIndex++){
+//			printf("0x%02X\n", pRX_Frame[unIndex]);
+//		}
 		return pRX_Frame;
 	}
 }
@@ -310,7 +316,7 @@ static int32_t nRF905ReceiveFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905
 
 	printf("Data ready.\n");
 	// start SPI read RX payload from nRF905
-	if (nRF905_SPI_RD(nRF905SPI_Fd, NRF905_CMD_RRP, tNRF905CommTask.pRX_Frame, NRF905_RX_ADDR_LEN) == NULL){
+	if (nRF905_SPI_RD(nRF905SPI_Fd, NRF905_CMD_RRP, tNRF905CommTask.pRX_Frame, NRF905_RX_PAYLOAD_LEN) == NULL){
 		NRF905D_LOG_ERR("Read RX payload from nRF905 failed.");
 		return (-1);
 	}
@@ -321,12 +327,12 @@ static int32_t nRF905ReceiveFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905
 static int32_t nRF905SendFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905CommTask)
 {
 	struct timeval tLastTime, tCurrentTime;
-	uint32_t unIndex;
-	static uint32_t unSendOutFrame = 0;
-	static uint32_t unResponseFrame = 0;
+//	uint32_t unIndex;
+//	static uint32_t unSendOutFrame = 0;
+//	static uint32_t unResponseFrame = 0;
 
 //	printf("nRF905 start send frame.\n");
-	NRF905D_LOG_INFO("nRF905 start send frame.");
+//	NRF905D_LOG_INFO("nRF905 start send frame.");
 
 	if (nRF905_SPI_WR(nRF905SPI_Fd, NRF905_CMD_WTP, tNRF905CommTask.pTX_Frame, NRF905_TX_PAYLOAD_LEN) < 0){
 		printf("Write TX payload error.\n");
@@ -353,7 +359,7 @@ static int32_t nRF905SendFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905Com
 		}
 		// sleep a while to make sure data has been sent out and no reflect return to receive
 		setNRF905Mode(NRF905_MODE_STD_BY);
-		unSendOutFrame++;
+//		unSendOutFrame++;
 
 		// start to read response
 		if (nRF905ReceiveFrame(nRF905SPI_Fd, tNRF905CommTask) < 0){
@@ -363,19 +369,19 @@ static int32_t nRF905SendFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905Com
 		}
 		// If receive OK, frame was saved in the tNRF905CommTask.pRX_Frame
 		setNRF905Mode(NRF905_MODE_STD_BY);
-		unResponseFrame++;
-		printf("Total %u frame has been sent out. \nThe difference between send out and receive is:%d \n",
-				unSendOutFrame, unSendOutFrame - unResponseFrame);
-		for (unIndex = 0; unIndex < tNRF905CommTask.unCommByteNum; unIndex++){
-			printf("0x%02X\n", tNRF905CommTask.pRX_Frame[unIndex]);
-		}
+
+//		for (unIndex = 0; unIndex < tNRF905CommTask.unCommByteNum; unIndex++){
+//			printf("0x%02X\n", tNRF905CommTask.pRX_Frame[unIndex]);
+//		}
 		if (memcmp(tNRF905CommTask.pTX_Frame, tNRF905CommTask.pRX_Frame + 1, tNRF905CommTask.unCommByteNum) != 0){
 			NRF905D_LOG_ERR("The received frame is different with sent one.");
 			return (-1);
 		}
-
+//		unResponseFrame++;
+//		printf("Total %u frame has been sent out. \nThe difference between send out and receive is:%d \n",
+//				unSendOutFrame, unSendOutFrame - unResponseFrame);
 	}
-	printf("One frame was successfully sent out. \n");
+//	printf("One frame was successfully sent out. \n");
 	return 0;
 }
 
@@ -424,19 +430,19 @@ static int32_t nNRF905ExecuteTask(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905
 {
 //	printf("Start to execute one task.\n");
 	if (nRF905SendFrame(nRF905SPI_Fd, tNRF905CommTask) < 0){
-//		printf("nRF905 execute task error, start hopping.\n");
-//		NRF905D_LOG_ERR("nRF905 execute task error, start hopping.");
-//		tRemoteControlMap.unNRF905CommSendFrameErr++;
-//		tRemoteControlMap.unNRF905CommSendFrameErrTotal++;
-//		if (nRF905Hopping(nRF905SPI_Fd, tNRF905CommTask) < 0){
-//			NRF905D_LOG_ERR("Can not find any valid receiver in air.");
-//			return (-1);
-//		}else{
-//			tRemoteControlMap.unNRF905CommSendFrameErr = 0;
-//			tRemoteControlMap.unNRF905CommSendFrameOK++;
-//			return 0;
-//		}
-		return 0;
+		printf("nRF905 execute task error, start hopping.\n");
+		NRF905D_LOG_ERR("nRF905 execute task error, start hopping.");
+		tRemoteControlMap.unNRF905CommSendFrameErr++;
+		tRemoteControlMap.unNRF905CommSendFrameErrTotal++;
+		if (nRF905Hopping(nRF905SPI_Fd, tNRF905CommTask) < 0){
+			NRF905D_LOG_ERR("Can not find any valid receiver in air.");
+			return (-1);
+		}else{
+			tRemoteControlMap.unNRF905CommSendFrameErr = 0;
+			tRemoteControlMap.unNRF905CommSendFrameOK++;
+			return 0;
+		}
+//		return 0;
 	}else{
 		tRemoteControlMap.unNRF905CommSendFrameErr = 0;
 		tRemoteControlMap.unNRF905CommSendFrameOK++;
