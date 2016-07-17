@@ -167,6 +167,7 @@ typedef struct _remoteControlMap {
 	uint32_t unNRF905CommSendFrameErr;
 	uint32_t unNRF905CommSendFrameErrTotal;
 	uint32_t unNRF905CommSendFrameOK;
+	uint32_t unNRF905HoppingNumer;
 	uint32_t unNRF905ChNoAndPwr;
 	uint32_t unNRF905RX_Address;
 }RemoteControlMap_t;
