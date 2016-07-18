@@ -431,19 +431,19 @@ static int32_t nNRF905ExecuteTask(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905
 {
 //	printf("Start to execute one task.\n");
 	if (nRF905SendFrame(nRF905SPI_Fd, tNRF905CommTask) < 0){
-//		printf("nRF905 execute task error, start hopping.\n");
-//		NRF905D_LOG_ERR("nRF905 execute task error, start hopping.");
-//		tRemoteControlMap.unNRF905CommSendFrameErr++;
-//		tRemoteControlMap.unNRF905CommSendFrameErrTotal++;
-//		if (nRF905Hopping(nRF905SPI_Fd, tNRF905CommTask) < 0){
-//			NRF905D_LOG_ERR("Can not find any valid receiver in air.");
-//			return (-1);
-//		}else{
-//			tRemoteControlMap.unNRF905CommSendFrameErr = 0;
-//			tRemoteControlMap.unNRF905CommSendFrameOK++;
-//			return 0;
-//		}
-		return 0;
+		printf("nRF905 execute task error, start hopping.\n");
+		NRF905D_LOG_ERR("nRF905 execute task error, start hopping.");
+		tRemoteControlMap.unNRF905CommSendFrameErr++;
+		tRemoteControlMap.unNRF905CommSendFrameErrTotal++;
+		if (nRF905Hopping(nRF905SPI_Fd, tNRF905CommTask) < 0){
+			NRF905D_LOG_ERR("Can not find any valid receiver in air.");
+			return (-1);
+		}else{
+			tRemoteControlMap.unNRF905CommSendFrameErr = 0;
+			tRemoteControlMap.unNRF905CommSendFrameOK++;
+			return 0;
+		}
+//		return 0;
 	}else{
 		tRemoteControlMap.unNRF905CommSendFrameErr = 0;
 		tRemoteControlMap.unNRF905CommSendFrameOK++;
