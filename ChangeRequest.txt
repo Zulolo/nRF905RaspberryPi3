@@ -2,4 +2,3 @@
 2. Use UP to get air quality data;
 3. Raspberry using RF to get these data;
 4. Raspberry show these data on web page.
-5. Raspberry add sleep during waiting nRF905 status pin set;
