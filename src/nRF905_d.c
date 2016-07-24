@@ -528,6 +528,8 @@ int32_t main(void) {
 	pid_t tTemp, tNRF905CommPID, tRoutinePID;
 	int32_t nTaskExecPipe[2];
 
+	unNeedtoClose = NRF905_FALSE;
+
     tSignalAction.sa_sigaction = sigINT_Handler;
     tSignalAction.sa_flags = SA_SIGINFO;
 

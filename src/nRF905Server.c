@@ -9,6 +9,7 @@
 #include <unistd.h>
 #include <stdio.h>
 #include <string.h>
+#include <wait.h>
 #include <sys/time.h>
 #include <errno.h>
 #include <stdlib.h>
@@ -48,9 +49,9 @@ void* ackRoutine(void* pTaskPipeFD)
 	tNRF905CommTask.unCommByteNum = NRF905_TX_PAYLOAD_LEN;
 
 	while (NRF905_FALSE == unNeedtoClose){
-		if (nWriteDataToNRF905Pipe(*pTaskPipeFD, &tNRF905CommTask, unACK_Payload) < 0 ){
-			printf("Write task communication payload to pipe error with code:%d", errno);
-			NRF905D_LOG_ERR("Write task communication payload to pipe error with code:%d", errno);
+		if (nWriteDataToNRF905Pipe(*((int32_t*)pTaskPipeFD), &tNRF905CommTask, unACK_Payload) < 0 ){
+			printf("Write task communication payload to pipe error with code:%d.", errno);
+			NRF905D_LOG_ERR("Write task communication payload to pipe error with code:%d.", errno);
 		}
 		usleep(ACK_TASK_INTERVAL_US);
 	}
@@ -117,12 +118,12 @@ void clientHandler(int32_t nClientSock, int32_t nTaskPipeFD)
 
     /* Receive message */
     if ((nReceivedCNT = recv(nClientSock, &tNRF905CommTask, sizeof(nRF905CommTask_t), 0)) < 0) {
-    	NRF905D_LOG_ERR("Failed to receive task data from client.");
+    	NRF905D_LOG_ERR("Failed to receive task data from client with code:%d.", errno);
     	close(nClientSock);
     	exit(-1);
     }
     if ((nReceivedCNT = recv(nClientSock, unACK_Payload, NRF905_TX_PAYLOAD_LEN, 0)) < 0) {
-    	NRF905D_LOG_ERR("Failed to receive payload data from client.");
+    	NRF905D_LOG_ERR("Failed to receive payload data from client with code:%d.", errno);
     	close(nClientSock);
     	exit(-1);
     }
@@ -135,12 +136,12 @@ void clientHandler(int32_t nClientSock, int32_t nTaskPipeFD)
     	}
         /* Receive message */
         if ((nReceivedCNT = recv(nClientSock, &tNRF905CommTask, sizeof(nRF905CommTask_t), 0)) < 0) {
-        	NRF905D_LOG_ERR("Failed to receive task data from client.");
+        	NRF905D_LOG_ERR("Failed to receive task data from client with error %d.", errno);
         	close(nClientSock);
         	exit(-1);
         }
         if ((nReceivedCNT = recv(nClientSock, unACK_Payload, NRF905_TX_PAYLOAD_LEN, 0)) < 0) {
-        	NRF905D_LOG_ERR("Failed to receive payload data from client.");
+        	NRF905D_LOG_ERR("Failed to receive payload data from client with error %d.", errno);
         	close(nClientSock);
         	exit(-1);
         }
@@ -181,12 +182,12 @@ int32_t pNRF905Server(int32_t nTaskPipeFD)
 
     /* Bind the server socket */
     if (bind(nServerSock, (struct sockaddr *)(&tEchoServer), sizeof(tEchoServer)) < 0) {
-    	NRF905D_LOG_ERR("Failed to bind the server socket");
+    	NRF905D_LOG_ERR("Failed to bind the server socket with code:%d", errno);
     	exit(-1);
     }
     /* Listen on the server socket */
     if (listen(nServerSock, MAX_CONNECTION_PENDING) < 0) {
-    	NRF905D_LOG_ERR("Failed to listen on server socket");
+    	NRF905D_LOG_ERR("Failed to listen on server socket with code:%d", errno);
     	exit(-1);
     }
 
@@ -194,7 +195,7 @@ int32_t pNRF905Server(int32_t nTaskPipeFD)
 	while (NRF905_FALSE == unNeedtoClose) {
 		/* Wait for client connection */
 		if ((nClientSock = accept(nServerSock, (struct sockaddr *)(&tEchoClient), &unClientLen)) < 0) {
-			NRF905D_LOG_ERR("Failed to accept client connection");
+			NRF905D_LOG_ERR("Failed to accept client connection with code %d", errno);
 			break;
 		}
 		NRF905D_LOG_INFO("Client connected: %s", inet_ntoa(tEchoClient.sin_addr));
