@@ -29,7 +29,9 @@
 #define __USED_NRF905_INTERNAL__
 #include "nRF905_d.h"
 
-void sighandler(int32_t signum, siginfo_t *info, void *ptr)
+extern int32_t pNRF905Server(int32_t nTaskPipeFD);
+
+void sigINT_Handler(int32_t signum, siginfo_t *info, void *ptr)
 {
 	unNeedtoClose = NRF905_TRUE;
 }
@@ -306,6 +308,7 @@ static int32_t nRF905ReceiveFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905
 				(bIsDataReady() == NRF905_TRUE)){
 			break;
 		}
+		usleep(200);
 		gettimeofday(&tCurrentTime, NULL);
 	}
 	if (getTimeDiffInUs(tLastTime, tCurrentTime) >= AFTER_CD_MAX_AM_DELAY_US){
@@ -349,6 +352,7 @@ static int32_t nRF905SendFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905Com
 			if (bIsDataReady() == NRF905_TRUE){
 				break;
 			}
+			usleep(200);
 			gettimeofday(&tCurrentTime, NULL);
 		}
 		if (getTimeDiffInUs(tLastTime, tCurrentTime) >= AFTER_SET_BURST_TX_MAX_DELAY_US){
@@ -516,46 +520,15 @@ int32_t pNRF905Comm(int32_t nTaskPipeFD)
 	exit(0);
 }
 
-int32_t pRoutineWork(int32_t nTaskPipeFD)
-{
-//	nRF905ThreadPara_t tRoutineWorkThreadPara = *((nRF905ThreadPara_t *)ptr);
-	nRF905CommTask_t tNRF905CommTask;
-	static int8_t unACK_Payload[NRF905_TX_PAYLOAD_LEN] = {0xA5, 0xA5, 0xDC, 0xCD,
-			0x01, 0x02, 0x03, 0x04,
-			0x05, 0x06, 0x07, 0x08,
-			0x09, 0x0A, 0x0B, 0x0C};
 
-	NRF905D_LOG_INFO("nRoutine work thread start.");
-	tNRF905CommTask.tCommType = NRF905_COMM_TYPE_TX_PKG;
-	tNRF905CommTask.unCommByteNum = NRF905_TX_PAYLOAD_LEN;
-
-	while (NRF905_FALSE == unNeedtoClose){
-		if (write(nTaskPipeFD, &tNRF905CommTask, sizeof(nRF905CommTask_t)) > 0 ){
-			if (write(nTaskPipeFD, unACK_Payload, NRF905_TX_PAYLOAD_LEN) > 0 ){
-				// increase some statistic internal variable here
-				NRF905D_LOG_INFO("One ACK task was successfully added into pipe.");
-			}else{
-				printf("Write task communication payload to pipe error with code:%d", errno);
-				NRF905D_LOG_ERR("Write task communication payload to pipe error with code:%d", errno);
-			}
-		}else{
-			printf("Write task communication type to pipe error with code:%d", errno);
-			NRF905D_LOG_ERR("Write task communication type to pipe error with code:%d", errno);
-		}
-		usleep(ROUTINE_TASK_INTERVAL_US);
-	}
-	NRF905D_LOG_INFO("Routine work thread exit.");
-	exit(0);
-}
 
 int32_t main(void) {
 	int32_t nRet;
 	struct sigaction tSignalAction;
 	pid_t tTemp, tNRF905CommPID, tRoutinePID;
 	int32_t nTaskExecPipe[2];
-	int32_t nNRF905DataFIFO_C_Read, nNRF905DataFIFO_C_Write;
 
-    tSignalAction.sa_sigaction = sighandler;
+    tSignalAction.sa_sigaction = sigINT_Handler;
     tSignalAction.sa_flags = SA_SIGINFO;
 
     sigaction(SIGINT, &tSignalAction, NULL);
@@ -600,74 +573,11 @@ int32_t main(void) {
 		exit(-1);
 	}else if(0 == tTemp){
 		// Child process
-		pRoutineWork(nTaskExecPipe[1]);
+		pNRF905Server(nTaskExecPipe[1]);
 		exit(0);
 	}else{
 		// Parent process
 		tRoutinePID = tTemp;
-	}
-
-	// Only parent process can get here
-	printf("Create FIFO to handle data sent by PHP from web application.\n");
-	unlink(NRF905_DATA_FIFO_C_WR_PATH);
-	unlink(NRF905_DATA_FIFO_C_RD_PATH);
-	nRet = mkfifo(NRF905_DATA_FIFO_C_WR_PATH, S_IRUSR| S_IWUSR);
-	if (nRet < 0) {
-		printf("mkfifo WR failed with error:%d.\n", errno);
-		NRF905D_LOG_ERR("mkfifo WR failed with error:%d.", errno);
-		kill(tNRF905CommPID, SIGINT);
-		kill(tRoutinePID, SIGINT);
-		waitpid(tNRF905CommPID, NULL, 0);
-		waitpid(tRoutinePID, NULL, 0);
-		close(nTaskExecPipe[0]);
-		close(nTaskExecPipe[1]);
-		return nDisableSPI_GPIO();
-	}
-
-	nRet = mkfifo(NRF905_DATA_FIFO_C_RD_PATH, S_IRUSR| S_IWUSR);
-	if (nRet < 0) {
-		printf("mkfifo RD failed with error:%d.\n", errno);
-		NRF905D_LOG_ERR("mkfifo RD failed with error:%d.", errno);
-		kill(tNRF905CommPID, SIGINT);
-		kill(tRoutinePID, SIGINT);
-		waitpid(tNRF905CommPID, NULL, 0);
-		waitpid(tRoutinePID, NULL, 0);
-		close(nTaskExecPipe[0]);
-		close(nTaskExecPipe[1]);
-		unlink(NRF905_DATA_FIFO_C_WR_PATH);
-		exit(-1);
-	}
-
-	// in PHP NRF905_DATA_FIFO_C_RD_PATH should also be opened first
-	nNRF905DataFIFO_C_Read = open(NRF905_DATA_FIFO_C_RD_PATH, O_RDONLY);
-	if (nNRF905DataFIFO_C_Read < 0){
-		printf("Open FIFO read pipe with error:%d.\n", errno);
-		NRF905D_LOG_ERR("Open FIFO read pipe with error:%d.", errno);
-		kill(tNRF905CommPID, SIGINT);
-		kill(tRoutinePID, SIGINT);
-		waitpid(tNRF905CommPID, NULL, 0);
-		waitpid(tRoutinePID, NULL, 0);
-		close(nTaskExecPipe[0]);
-		close(nTaskExecPipe[1]);
-		unlink(NRF905_DATA_FIFO_C_WR_PATH);
-		unlink(NRF905_DATA_FIFO_C_RD_PATH);
-		exit(-1);
-	}
-
-	nNRF905DataFIFO_C_Write = open(NRF905_DATA_FIFO_C_WR_PATH, O_WRONLY);
-	if (nNRF905DataFIFO_C_Write < 0){
-		printf("Open FIFO write pipe with error:%d.\n", errno);
-		NRF905D_LOG_ERR("Open FIFO write pipe with error:%d.", errno);
-		kill(tNRF905CommPID, SIGINT);
-		kill(tRoutinePID, SIGINT);
-		waitpid(tNRF905CommPID, NULL, 0);
-		waitpid(tRoutinePID, NULL, 0);
-		close(nTaskExecPipe[0]);
-		close(nTaskExecPipe[1]);
-		close(nNRF905DataFIFO_C_Read);
-		unlink(NRF905_DATA_FIFO_C_WR_PATH);
-		unlink(NRF905_DATA_FIFO_C_RD_PATH);
-		exit(-1);
 	}
 
 	// If no one open the other side of the two FIFO, and also no INT, here will never reach
@@ -683,9 +593,5 @@ int32_t main(void) {
 
 	close(nTaskExecPipe[0]);
 	close(nTaskExecPipe[1]);
-	close(nNRF905DataFIFO_C_Read);
-	close(nNRF905DataFIFO_C_Write);
-	unlink(NRF905_DATA_FIFO_C_WR_PATH);
-	unlink(NRF905_DATA_FIFO_C_RD_PATH);
 	exit(0);
 }

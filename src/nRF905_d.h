@@ -27,6 +27,10 @@
 										closelog()
 
 #define US_PER_SECONDE					1000000
+#define NRF905_TX_ADDR_LEN				4
+#define NRF905_RX_ADDR_LEN				4
+#define NRF905_RX_PAYLOAD_LEN			16
+#define NRF905_TX_PAYLOAD_LEN			NRF905_RX_PAYLOAD_LEN
 
 typedef enum _nRF905Boolean {
 	NRF905_FALSE = 0,
@@ -39,8 +43,6 @@ typedef enum _nRF905Boolean {
 
 	#define __NRF905_EXTERN__
 	#define NRF905_DATA_FIFO_FOLDER_PATH		"/var/tmp/"
-	#define NRF905_DATA_FIFO_C_WR_PATH			NRF905_DATA_FIFO_FOLDER_PATH "data_fifo_c_wr_php_rd"
-	#define NRF905_DATA_FIFO_C_RD_PATH			NRF905_DATA_FIFO_FOLDER_PATH "data_fifo_c_rd_php_wr"
 	#define ARRAY_SIZE(a) 						(sizeof(a) / sizeof((a)[0]))
 	#define NRF905_SPI_DEVICE					"/dev/spidev0.0"
 
@@ -67,10 +69,6 @@ typedef enum _nRF905Boolean {
 	#define NRF905_CMD_CC(unPwrChn)					((unPwrChn) | 0x1000)
 	#define CH_MSK_IN_CC_REG						0x01FF
 
-	#define NRF905_TX_ADDR_LEN						4
-	#define NRF905_RX_ADDR_LEN						4
-	#define NRF905_RX_PAYLOAD_LEN					16
-	#define NRF905_TX_PAYLOAD_LEN					NRF905_RX_PAYLOAD_LEN
 	#define HOPPING_MAX_CD_RETRY_NUM				100
 	#define HOPPING_MAX_RETRY_NUM					HOPPING_MAX_CD_RETRY_NUM
 	#define EXEC_TSK_MAX_CD_RETRY_NUM				HOPPING_MAX_CD_RETRY_NUM
@@ -81,7 +79,6 @@ typedef enum _nRF905Boolean {
 	#define AFTER_SET_BURST_RX_MAX_CD_DELAY_US		50000
 	#define AFTER_CD_MAX_AM_DELAY_US				80000	// Since there maybe interference in tha air, the CD may be set very soon
 	#define AFTER_AM_MAX_DR_DELAY_US				80000
-	#define ROUTINE_TASK_INTERVAL_US				100000
 
 	#define NRF905_MAX_COMM_ERR_BEFORE_HOPPING		20
 
