@@ -1,4 +1,0 @@
-1. Use UP (STM32F4) to communicate with AM2301 and get temperature and humidity data;
-2. Use UP to get air quality data;
-3. Raspberry using RF to get these data;
-4. Raspberry show these data on web page.
