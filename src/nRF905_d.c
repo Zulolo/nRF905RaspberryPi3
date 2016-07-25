@@ -23,11 +23,15 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <stddef.h>
 #include <linux/types.h>
 #include <linux/spi/spidev.h>
 
 #define __USED_NRF905_INTERNAL__
 #include "nRF905_d.h"
+
 
 extern int32_t pNRF905Server(int32_t nTaskPipeFD);
 
@@ -36,6 +40,56 @@ void sigINT_Handler(int32_t signum, siginfo_t *info, void *ptr)
 	unNeedtoClose = NRF905_TRUE;
 }
 
+void sigCHLD_Handler(int32_t signum, siginfo_t *info, void *ptr)
+{
+	pid_t tChildPid;
+	tChildPid = waitpid(-1, NULL, WNOHANG);
+	if (tChildPid > 0){
+		nClearPid(tChildPid, tClientPid, MAX_CONNECTION_PENDING);
+	}
+}
+
+int32_t nRecordPid(pid_t tChildPid, pid_t* pClientPid, uint32_t unMaxArrayLength){
+	uint32_t unIndex;
+	for (unIndex = 0; unIndex < unMaxArrayLength; unIndex++){
+		if (PID_EMPTY == *(pClientPid + unIndex)){
+			*(pClientPid + unIndex) = tChildPid;
+			return 0;
+		}
+	}
+	return -1;
+}
+
+int32_t nClearPid(pid_t tChildPid, pid_t* pClientPid, uint32_t unMaxArrayLength){
+	uint32_t unIndex;
+	for (unIndex = 0; unIndex < unMaxArrayLength; unIndex++){
+		if (tChildPid == *(pClientPid + unIndex)){
+			*(pClientPid + unIndex) = PID_EMPTY;
+			return 0;
+		}
+	}
+	return -1;
+}
+
+int32_t nKillAllChild(pid_t* pClientPid, uint32_t unMaxArrayLength){
+	uint32_t unIndex;
+	for (unIndex = 0; unIndex < unMaxArrayLength; unIndex++){
+		if (PID_EMPTY != *(pClientPid + unIndex)){
+			kill(*(pClientPid + unIndex), SIGINT);
+		}
+	}
+	return 0;
+}
+
+int32_t nWaitAllChild(pid_t* pClientPid, uint32_t unMaxArrayLength){
+	uint32_t unIndex;
+	for (unIndex = 0; unIndex < unMaxArrayLength; unIndex++){
+		if (PID_EMPTY != *(pClientPid + unIndex)){
+			sleep(5);
+		}
+	}
+	return 0;
+}
 int32_t setNRF905Mode(nRF905Mode_t tNRF905Mode)
 {
 	static nRF905Mode_t tNRF905ModeGlobal = NRF905_MODE_PWR_DOWN;
@@ -455,13 +509,161 @@ static int32_t nNRF905ExecuteTask(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905
 	}
 }
 
-int32_t pNRF905Comm(int32_t nTaskPipeFD)
+int32_t nUnixSocketListen(const char *pNRF905ServerName)
 {
-	int32_t nRF905SPI_FD;
-	nRF905CommTask_t tNRF905CommTask;
-//	nRF905ThreadPara_t tNRF905CommThreadPara = *((nRF905ThreadPara_t *)ptr);
+	int32_t nLocalSocketFd;
+	struct sockaddr_un tSocketAddrUn;
+	int32_t nLen;
+	if ((nLocalSocketFd = socket(AF_UNIX, SOCK_STREAM, 0)) < 0){
+		NRF905D_LOG_ERR("Create AF_UNIX socket failed with error %d.", errno);
+		return (-1);
+	}
+	unlink(pNRF905ServerName);               /* in case it already exists */
+	memset(&tSocketAddrUn, 0, sizeof(tSocketAddrUn));
+	tSocketAddrUn.sun_family = AF_UNIX;
+	strcpy(tSocketAddrUn.sun_path, pNRF905ServerName);
+	nLen = offsetof(struct sockaddr_un, sun_path) + strlen(pNRF905ServerName);
+	/* bind the name to the descriptor */
+	if (bind(nLocalSocketFd, (struct sockaddr *)&tSocketAddrUn, nLen) < 0){
+		close(nLocalSocketFd);
+		NRF905D_LOG_ERR("Bind local socket failed with error %d.", errno);
+		return (-1);
+	}else{
+		if (listen(nLocalSocketFd, MAX_CONNECTION_PENDING) < 0){
+			close(nLocalSocketFd);
+			NRF905D_LOG_ERR("Listen local socket failed with error %d.", errno);
+			return (-1);
+		}else{
+			return nLocalSocketFd;
+		}
+	}
+}
 
-	NRF905D_LOG_INFO("nRF905 communication thread start.");
+int32_t nUnixSocketAccept(int32_t nServerSocket, uid_t* pAcceptUID)
+{
+	int32_t nClientFd, nLeng;
+	struct sockaddr_un tSocketAddrUn;
+	struct stat tStatBuf;
+	nLeng = sizeof(tSocketAddrUn);
+
+	if ((nClientFd = accept(nServerSocket, (struct sockaddr *)&tSocketAddrUn, &nLeng)) < 0){
+		return (-1);
+	}
+	/* obtain the client's uid from its calling address */
+	nLeng -= offsetof(struct sockaddr_un, sun_path);  /* len of pathname */
+	tSocketAddrUn.sun_path[nLeng] = 0; /* null terminate */
+	if (stat(tSocketAddrUn.sun_path, &tStatBuf) < 0){
+		close(nClientFd);
+		NRF905D_LOG_ERR("Stat local socket failed with error %d.", errno);
+		return (-1);
+	}else{
+		if (S_ISSOCK(tStatBuf.st_mode)){
+			if (pAcceptUID != NULL){
+				*pAcceptUID = tStatBuf.st_uid;    /* return uid of caller */
+			}
+			unlink(tSocketAddrUn.sun_path);       /* we're done with pathname now */
+			return nClientFd;
+		}else{
+			close(nClientFd);
+			NRF905D_LOG_ERR("S_ISSOCK local socket failed with error %d.", errno);
+			return (-1);
+		}
+	}
+}
+
+void clientHandler(int32_t nClientSock, int32_t nRF905SPI_FD)
+{
+	int32_t nReceivedCNT;
+	nRF905CommTask_t tNRF905CommTask;
+	uint8_t unACK_Payload[NRF905_TX_PAYLOAD_LEN];
+
+    /* Receive message */
+    if ((nReceivedCNT = recv(nClientSock, &tNRF905CommTask, sizeof(nRF905CommTask_t), 0)) < 0) {
+    	NRF905D_LOG_ERR("Failed to receive task data from client with code:%d.", errno);
+    	close(nClientSock);
+    	exit(-1);
+    }
+    if ((nReceivedCNT = recv(nClientSock, unACK_Payload, NRF905_TX_PAYLOAD_LEN, 0)) < 0) {
+    	NRF905D_LOG_ERR("Failed to receive payload data from client with code:%d.", errno);
+    	close(nClientSock);
+    	exit(-1);
+    }
+    while (NRF905_FALSE == unNeedtoClose) {
+    	tNRF905CommTask.pTX_Frame = unACK_Payload;
+		tNRF905CommTask.pRX_Frame = malloc(tNRF905CommTask.unCommByteNum + 1);
+		if (NULL != tNRF905CommTask.pRX_Frame){
+			NRF905D_LOG_INFO("One ACK task was successfully gotten from pipe.");
+			// add semaphore here
+			nNRF905ExecuteTask(nRF905SPI_FD, tNRF905CommTask);
+			// release semaphore here
+			free(tNRF905CommTask.pRX_Frame);
+		}else{
+			NRF905D_LOG_ERR("WTF malloc fail??");
+        	close(nClientSock);
+        	exit(-1);
+		}
+
+        /* Receive message */
+        if ((nReceivedCNT = recv(nClientSock, &tNRF905CommTask, sizeof(nRF905CommTask_t), 0)) < 0) {
+        	NRF905D_LOG_ERR("Failed to receive task data from client with error %d.", errno);
+        	close(nClientSock);
+        	exit(-1);
+        }
+        if ((nReceivedCNT = recv(nClientSock, unACK_Payload, NRF905_TX_PAYLOAD_LEN, 0)) < 0) {
+        	NRF905D_LOG_ERR("Failed to receive payload data from client with error %d.", errno);
+        	close(nClientSock);
+        	exit(-1);
+        }
+    }
+	close(nClientSock);
+	exit(0);
+}
+
+
+void* ackRoutine(void* pTaskPipeFD)
+{
+	nRF905CommTask_t tNRF905CommTask;
+	static uint8_t unACK_Payload[NRF905_TX_PAYLOAD_LEN] = {0xA5, 0xA5, 0xDC, 0xCD,
+			0x01, 0x02, 0x03, 0x04,
+			0x05, 0x06, 0x07, 0x08,
+			0x09, 0x0A, 0x0B, 0x0C};
+
+	tNRF905CommTask.tCommType = NRF905_COMM_TYPE_TX_PKG;
+	tNRF905CommTask.unCommByteNum = NRF905_TX_PAYLOAD_LEN;
+
+	while (NRF905_FALSE == unNeedtoClose){
+		if (nWriteDataToNRF905Pipe(*((int32_t*)pTaskPipeFD), &tNRF905CommTask, unACK_Payload) < 0 ){
+			printf("Write task communication payload to pipe error with code:%d.", errno);
+			NRF905D_LOG_ERR("Write task communication payload to pipe error with code:%d.", errno);
+		}
+		usleep(ACK_TASK_INTERVAL_US);
+	}
+
+	pthread_exit(NULL);
+}
+
+int32_t main(void) {
+	int32_t nRF905SPI_FD;
+	struct sigaction tSignalINT_Action, tSignalCHLD_Action;
+	nRF905CommTask_t tNRF905CommTask;
+	int32_t nServerSock, nClientSock;
+	uid_t tAcceptUID;
+	pid_t tChildPid;
+
+	memset(tClientPid, 0, sizeof(tClientPid));
+
+    tSignalINT_Action.sa_sigaction = sigINT_Handler;
+    tSignalINT_Action.sa_flags = SA_SIGINFO;
+    sigaction(SIGINT, &tSignalINT_Action, NULL);
+
+    tSignalCHLD_Action.sa_sigaction = sigCHLD_Handler;
+    tSignalCHLD_Action.sa_flags = SA_SIGINFO;
+    sigaction(SIGCHLD, &tSignalCHLD_Action, NULL);
+
+	puts("!!!nRF905 Daemon start!!!"); /* prints !!!nRF905 Daemon start!!! */
+
+	NRF905D_LOG_INFO("nRF905 Daemon start...");
+
 	printf("Initialize GPIO.\n");
 	if (nInitNRF905GPIO() < 0){
 		NRF905D_LOG_ERR("nRF905 communication thread exit because nRF905 GPIO initialization failed.");
@@ -471,12 +673,14 @@ int32_t pNRF905Comm(int32_t nTaskPipeFD)
 	nRF905SPI_FD = open(NRF905_SPI_DEVICE, O_RDWR);
 	if (nRF905SPI_FD < 0) {
 		NRF905D_LOG_ERR("nRF905 communication thread exit because SPI port %s open failed.", NRF905_SPI_DEVICE);
+		nDisableSPI_GPIO();
 		exit(-1);
 	}
 
 	printf("Initialize SPI.\n");
 	if (nRF905SpiInitial(nRF905SPI_FD) < 0){
 		close(nRF905SPI_FD);
+		nDisableSPI_GPIO();
 		NRF905D_LOG_ERR("nRF905 communication thread exit because SPI initialization failed.");
 		exit(-1);
 	}
@@ -484,116 +688,51 @@ int32_t pNRF905Comm(int32_t nTaskPipeFD)
 	printf("Initialize nRF905 control register.\n");
 	if (nRF905CR_Initial(nRF905SPI_FD) < 0){
 		close(nRF905SPI_FD);
+		nDisableSPI_GPIO();
 		NRF905D_LOG_ERR("nRF905 communication thread exit because nRF905 CR initialization failed.");
 		exit(-1);
 	}
 
-	while (NRF905_FALSE == unNeedtoClose){
-		if (read(nTaskPipeFD, &tNRF905CommTask, sizeof(nRF905CommTask_t)) > 0){
-			if (tNRF905CommTask.unCommByteNum > 0){
-				tNRF905CommTask.pTX_Frame = malloc(tNRF905CommTask.unCommByteNum);
-				if (NULL == tNRF905CommTask.pTX_Frame){
-					NRF905D_LOG_ERR("WTF malloc fail??");
-				}else{
-					if (read(nTaskPipeFD, tNRF905CommTask.pTX_Frame, tNRF905CommTask.unCommByteNum) > 0){
-						tNRF905CommTask.pRX_Frame = malloc(tNRF905CommTask.unCommByteNum + 1);
-						if (NULL != tNRF905CommTask.pRX_Frame){
-							NRF905D_LOG_INFO("One ACK task was successfully gotten from pipe.");
-							nNRF905ExecuteTask(nRF905SPI_FD, tNRF905CommTask);
-							free(tNRF905CommTask.pRX_Frame);
-						}else{
-							NRF905D_LOG_ERR("WTF malloc fail??");
-						}
-					}else{
-						NRF905D_LOG_ERR("Read task communication payload from pipe error with code:%d", errno);
-					}
-					free(tNRF905CommTask.pTX_Frame);
-				}
-			}
+	printf("Initialize local socket.\n");
+	nServerSock = nUnixSocketListen(NRF905_SERVER_NAME);
+	if(nServerSock < 0){
+		close(nRF905SPI_FD);
+		nDisableSPI_GPIO();
+		NRF905D_LOG_ERR("Error[%d] when listening...\n",errno);
+		exit(-1);
+	}
+
+	pthread_attr_init(&tACK_ThreadAttr);
+	pthread_create(&tACK_Thread, &tACK_ThreadAttr, ackRoutine, (void *)(&nTaskPipeFD));
+
+    /* Run until cancelled */
+	while (NRF905_FALSE == unNeedtoClose) {
+		/* Wait for client connection */
+		nClientSock = nUnixSocketAccept(nServerSock, &tAcceptUID);
+		if(nClientSock < 0){
+			NRF905D_LOG_ERR("Error[%d] when accepting...\n",errno);
+			break;
+		}
+		tChildPid = fork();
+		if (tChildPid < 0){
+			NRF905D_LOG_ERR("Fork failed.");
+		}else if (0 == tChildPid){
+			// Child process
+			clientHandler(nClientSock, nRF905SPI_FD);
 		}else{
-			NRF905D_LOG_ERR("Read task communication type from pipe error with code:%d", errno);
+			// Parent process
+			nRecordPid(tChildPid, tClientPid, MAX_CONNECTION_PENDING);
 		}
 	}
+
+	nKillAllChild(tClientPid, MAX_CONNECTION_PENDING);
+	pthread_join(tACK_Thread, NULL);
+	nWaitAllChild(tClientPid, MAX_CONNECTION_PENDING);
 	nDisableSPI_GPIO();
 	close(nRF905SPI_FD);
-	NRF905D_LOG_INFO("nRF905 communication thread exit.");
-	exit(0);
-}
+	close(nServerSock);
 
-
-
-int32_t main(void) {
-	int32_t nRet;
-	struct sigaction tSignalAction;
-	pid_t tTemp, tNRF905CommPID, tRoutinePID;
-	int32_t nTaskExecPipe[2];
-
-	unNeedtoClose = NRF905_FALSE;
-
-    tSignalAction.sa_sigaction = sigINT_Handler;
-    tSignalAction.sa_flags = SA_SIGINFO;
-
-    sigaction(SIGINT, &tSignalAction, NULL);
-
-	puts("!!!nRF905 Daemon start!!!"); /* prints !!!nRF905 Daemon start!!! */
-
-	NRF905D_LOG_INFO("nRF905 Daemon start...");
-
-	// Prepare the pipe
-	nRet = pipe(nTaskExecPipe);
-	if(nRet < 0){
-		NRF905D_LOG_ERR("Open task execution pipe failed with error:%d.", nRet);
-		exit(-1);
-	}
-
-	// Start little birds
-	printf("Start nRF905 communication thread.\n");
-	tTemp = fork();
-	if (tTemp < 0){
-		NRF905D_LOG_ERR("Start nRF905 communication process failed.");
-		close(nTaskExecPipe[0]);
-		close(nTaskExecPipe[1]);
-		exit(-1);
-	}else if(0 == tTemp){
-		// Child process
-		pNRF905Comm(nTaskExecPipe[0]);
-		exit(0);
-	}else{
-		// Parent process
-		tNRF905CommPID = tTemp;
-	}
-
-	// Only parent process can get here
-	printf("Start routine work thread.\n");
-	tTemp = fork();
-	if (tTemp < 0){
-		NRF905D_LOG_ERR("Start routine thread failed with error:%d.", nRet);
-		kill(tNRF905CommPID, SIGINT);
-		waitpid(tNRF905CommPID, NULL, 0);
-		close(nTaskExecPipe[0]);
-		close(nTaskExecPipe[1]);
-		exit(-1);
-	}else if(0 == tTemp){
-		// Child process
-		pNRF905Server(nTaskExecPipe[1]);
-		exit(0);
-	}else{
-		// Parent process
-		tRoutinePID = tTemp;
-	}
-
-	// If no one open the other side of the two FIFO, and also no INT, here will never reach
-	while (NRF905_FALSE == unNeedtoClose){
-		usleep(500000);
-	}
 	NRF905D_LOG_INFO("INT signal was received, exit.");
 
-	kill(tNRF905CommPID, SIGINT);
-	kill(tRoutinePID, SIGINT);
-	waitpid(tNRF905CommPID, NULL, 0);
-	waitpid(tRoutinePID, NULL, 0);
-
-	close(nTaskExecPipe[0]);
-	close(nTaskExecPipe[1]);
 	exit(0);
 }

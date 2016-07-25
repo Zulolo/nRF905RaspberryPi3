@@ -32,22 +32,12 @@
 #define NRF905_RX_PAYLOAD_LEN			16
 #define NRF905_TX_PAYLOAD_LEN			NRF905_RX_PAYLOAD_LEN
 
+#define NRF905_SERVER_NAME				"/var/tmp/nRF905LocalSocket"
+
 typedef enum _nRF905Boolean {
 	NRF905_FALSE = 0,
 	NRF905_TRUE = !NRF905_FALSE
 }nRF905Boolean_t;
-
-typedef enum _nRF905CommType {
-	NRF905_COMM_TYPE_RX_PKG = 0,
-	NRF905_COMM_TYPE_TX_PKG
-}nRF905CommType_t;
-
-typedef struct _CommTask {
-	nRF905CommType_t tCommType;
-	uint8_t unCommByteNum;
-	uint8_t* pTX_Frame;
-	uint8_t* pRX_Frame;
-}nRF905CommTask_t;
 
 #ifdef __USED_NRF905_INTERNAL__
 
@@ -93,6 +83,10 @@ typedef struct _CommTask {
 	#define AFTER_AM_MAX_DR_DELAY_US				80000
 
 	#define NRF905_MAX_COMM_ERR_BEFORE_HOPPING		20
+	#define MAX_CONNECTION_PENDING 					8    /* Max connection requests */
+	#define PID_EMPTY								0
+	#define RECEIVE_BUFFER_LENGTH					256
+	#define ACK_TASK_INTERVAL_US					100000
 
 	typedef enum _nRF905Modes {
 		NRF905_MODE_PWR_DOWN = 0,
@@ -114,7 +108,17 @@ typedef struct _CommTask {
 //		NRF905_STATE_RXING,
 //		NRF905_STATE_END
 //	}nRF905State_t;
+	typedef enum _nRF905CommType {
+		NRF905_COMM_TYPE_RX_PKG = 0,
+		NRF905_COMM_TYPE_TX_PKG
+	}nRF905CommType_t;
 
+	typedef struct _CommTask {
+		nRF905CommType_t tCommType;
+		uint8_t unCommByteNum;
+		uint8_t* pTX_Frame;
+		uint8_t* pRX_Frame;
+	}nRF905CommTask_t;
 	typedef struct _NRF905CommThreadPara{
 		int32_t nTaskReadPipe;
 		int32_t nBeforeIsRF905SPI_Fd_NowDoNotUse;
@@ -150,11 +154,13 @@ typedef struct _CommTask {
 																		{GPIO_LEVEL_HIGH, GPIO_LEVEL_LOW, GPIO_LEVEL_LOW},
 																		{GPIO_LEVEL_HIGH, GPIO_LEVEL_HIGH, GPIO_LEVEL_LOW},
 																		{GPIO_LEVEL_HIGH, GPIO_LEVEL_HIGH, GPIO_LEVEL_HIGH}};
+
+	pid_t tClientPid[MAX_CONNECTION_PENDING] = {0, };
 	static uint8_t unSPI_Mode = SPI_MODE_0;
 	static uint8_t unSPI_Bits = 8;
 	static uint32_t unSPI_Speed = 5000000;
 	static uint16_t unSPI_Delay = 0;
-
+	static uint8_t unNeedtoClose = NRF905_FALSE;;
 #else
 	#define __NRF905_EXTERN__			extern
 #endif
@@ -168,6 +174,5 @@ typedef struct _remoteControlMap {
 	uint32_t unNRF905RX_Address;
 }RemoteControlMap_t;
 
-__NRF905_EXTERN__ uint8_t unNeedtoClose;
 __NRF905_EXTERN__ RemoteControlMap_t tRemoteControlMap;
 #endif /* NRF905_D_H_ */
