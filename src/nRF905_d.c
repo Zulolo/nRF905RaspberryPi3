@@ -19,6 +19,7 @@
 #include <pthread.h>
 #include <getopt.h>
 #include <fcntl.h>
+#include <semaphore.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -38,26 +39,6 @@ extern int32_t pNRF905Server(int32_t nTaskPipeFD);
 void sigINT_Handler(int32_t signum, siginfo_t *info, void *ptr)
 {
 	unNeedtoClose = NRF905_TRUE;
-}
-
-void sigCHLD_Handler(int32_t signum, siginfo_t *info, void *ptr)
-{
-	pid_t tChildPid;
-	tChildPid = waitpid(-1, NULL, WNOHANG);
-	if (tChildPid > 0){
-		nClearPid(tChildPid, tClientPid, MAX_CONNECTION_PENDING);
-	}
-}
-
-int32_t nRecordPid(pid_t tChildPid, pid_t* pClientPid, uint32_t unMaxArrayLength){
-	uint32_t unIndex;
-	for (unIndex = 0; unIndex < unMaxArrayLength; unIndex++){
-		if (PID_EMPTY == *(pClientPid + unIndex)){
-			*(pClientPid + unIndex) = tChildPid;
-			return 0;
-		}
-	}
-	return -1;
 }
 
 int32_t nClearPid(pid_t tChildPid, pid_t* pClientPid, uint32_t unMaxArrayLength){
@@ -90,6 +71,27 @@ int32_t nWaitAllChild(pid_t* pClientPid, uint32_t unMaxArrayLength){
 	}
 	return 0;
 }
+
+int32_t nRecordPid(pid_t tChildPid, pid_t* pClientPid, uint32_t unMaxArrayLength){
+	uint32_t unIndex;
+	for (unIndex = 0; unIndex < unMaxArrayLength; unIndex++){
+		if (PID_EMPTY == *(pClientPid + unIndex)){
+			*(pClientPid + unIndex) = tChildPid;
+			return 0;
+		}
+	}
+	return -1;
+}
+
+void sigCHLD_Handler(int32_t signum, siginfo_t *info, void *ptr)
+{
+	pid_t tChildPid;
+	tChildPid = waitpid(-1, NULL, WNOHANG);
+	if (tChildPid > 0){
+		nClearPid(tChildPid, tClientPid, MAX_CONNECTION_PENDING);
+	}
+}
+
 int32_t setNRF905Mode(nRF905Mode_t tNRF905Mode)
 {
 	static nRF905Mode_t tNRF905ModeGlobal = NRF905_MODE_PWR_DOWN;
@@ -541,12 +543,13 @@ int32_t nUnixSocketListen(const char *pNRF905ServerName)
 
 int32_t nUnixSocketAccept(int32_t nServerSocket, uid_t* pAcceptUID)
 {
-	int32_t nClientFd, nLeng;
+	int32_t nClientFd;
+	socklen_t nLeng;
 	struct sockaddr_un tSocketAddrUn;
 	struct stat tStatBuf;
 	nLeng = sizeof(tSocketAddrUn);
 
-	if ((nClientFd = accept(nServerSocket, (struct sockaddr *)&tSocketAddrUn, &nLeng)) < 0){
+	if ((nClientFd = accept(nServerSocket, (struct sockaddr *)(&tSocketAddrUn), &nLeng)) < 0){
 		return (-1);
 	}
 	/* obtain the client's uid from its calling address */
@@ -571,7 +574,50 @@ int32_t nUnixSocketAccept(int32_t nServerSocket, uid_t* pAcceptUID)
 	}
 }
 
-void clientHandler(int32_t nClientSock, int32_t nRF905SPI_FD)
+/* Create a client endpoint32_t and connect to a server.   Returns fd if all OK, <0 on error. */
+int32_t nUnixSocketConn(const char *pNRF905ServerName)
+{
+	int32_t nConnectSocketFd;
+	int32_t nLen;
+	struct sockaddr_un tSocketAddrUn;
+
+	if ((nConnectSocketFd = socket(AF_UNIX, SOCK_STREAM, 0)) < 0){     /* create a UNIX domain stream socket */
+		return(-1);
+	}
+	memset(&tSocketAddrUn, 0, sizeof(tSocketAddrUn));            /* fill socket address structure with our address */
+	tSocketAddrUn.sun_family = AF_UNIX;
+	sprintf(tSocketAddrUn.sun_path, "scktmp%05d", getpid());
+	nLen = offsetof(struct sockaddr_un, sun_path) + strlen(tSocketAddrUn.sun_path);
+	unlink(tSocketAddrUn.sun_path);               /* in case it already exists */
+	if (bind(nConnectSocketFd, (struct sockaddr *)&tSocketAddrUn, nLen) < 0) {
+		close(nConnectSocketFd);
+		NRF905D_LOG_ERR("Bind socket failed during client connect with error %d.", errno);
+		return (-1);
+	}else{
+		/* fill socket address structure with server's address */
+		memset(&tSocketAddrUn, 0, sizeof(tSocketAddrUn));
+		tSocketAddrUn.sun_family = AF_UNIX;
+		strcpy(tSocketAddrUn.sun_path, pNRF905ServerName);
+		nLen = offsetof(struct sockaddr_un, sun_path) + strlen(pNRF905ServerName);
+		if (connect(nConnectSocketFd, (struct sockaddr *)&tSocketAddrUn, nLen) < 0)   {
+			close(nConnectSocketFd);
+			NRF905D_LOG_ERR("Connect server failed with error %d.", errno);
+			return (-1);
+		}else{
+			return (nConnectSocketFd);
+		}
+	}
+}
+
+int32_t nSendDataToNRF905Socket(int32_t nConnectedSocketFD, nRF905CommTask_t* pNRF905CommTask, uint8_t* pACK_Payload)
+{
+	uint8_t unBuffer[sizeof(nRF905CommTask_t) + NRF905_TX_PAYLOAD_LEN];
+	memcpy(unBuffer, pNRF905CommTask, sizeof(nRF905CommTask_t));
+	memcpy(unBuffer + sizeof(nRF905CommTask_t), pACK_Payload, NRF905_TX_PAYLOAD_LEN);
+	return send(nConnectedSocketFD, unBuffer, sizeof(nRF905CommTask_t) + NRF905_TX_PAYLOAD_LEN, 0);
+}
+
+void clientHandler(int32_t nClientSock, int32_t nRF905SPI_FD, sem_t* pSem)
 {
 	int32_t nReceivedCNT;
 	nRF905CommTask_t tNRF905CommTask;
@@ -593,9 +639,9 @@ void clientHandler(int32_t nClientSock, int32_t nRF905SPI_FD)
 		tNRF905CommTask.pRX_Frame = malloc(tNRF905CommTask.unCommByteNum + 1);
 		if (NULL != tNRF905CommTask.pRX_Frame){
 			NRF905D_LOG_INFO("One ACK task was successfully gotten from pipe.");
-			// add semaphore here
+			sem_wait(pSem);
 			nNRF905ExecuteTask(nRF905SPI_FD, tNRF905CommTask);
-			// release semaphore here
+			sem_post(pSem);
 			free(tNRF905CommTask.pRX_Frame);
 		}else{
 			NRF905D_LOG_ERR("WTF malloc fail??");
@@ -620,35 +666,45 @@ void clientHandler(int32_t nClientSock, int32_t nRF905SPI_FD)
 }
 
 
-void* ackRoutine(void* pTaskPipeFD)
+void* ackRoutine(void* pArgu)
 {
 	nRF905CommTask_t tNRF905CommTask;
 	static uint8_t unACK_Payload[NRF905_TX_PAYLOAD_LEN] = {0xA5, 0xA5, 0xDC, 0xCD,
 			0x01, 0x02, 0x03, 0x04,
 			0x05, 0x06, 0x07, 0x08,
 			0x09, 0x0A, 0x0B, 0x0C};
+	int32_t nConnectedSocketFd;
+
+	nConnectedSocketFd = nUnixSocketConn(NRF905_SERVER_NAME);
+	if(nConnectedSocketFd < 0)
+	{
+		printf("Error[%d] when connecting...", errno);
+		pthread_exit(NULL);
+	}
 
 	tNRF905CommTask.tCommType = NRF905_COMM_TYPE_TX_PKG;
 	tNRF905CommTask.unCommByteNum = NRF905_TX_PAYLOAD_LEN;
 
 	while (NRF905_FALSE == unNeedtoClose){
-		if (nWriteDataToNRF905Pipe(*((int32_t*)pTaskPipeFD), &tNRF905CommTask, unACK_Payload) < 0 ){
+		if (nSendDataToNRF905Socket(nConnectedSocketFd, &tNRF905CommTask, unACK_Payload) < 0 ){
 			printf("Write task communication payload to pipe error with code:%d.", errno);
 			NRF905D_LOG_ERR("Write task communication payload to pipe error with code:%d.", errno);
 		}
 		usleep(ACK_TASK_INTERVAL_US);
 	}
-
+	close(nConnectedSocketFd);
 	pthread_exit(NULL);
 }
 
 int32_t main(void) {
 	int32_t nRF905SPI_FD;
 	struct sigaction tSignalINT_Action, tSignalCHLD_Action;
-	nRF905CommTask_t tNRF905CommTask;
 	int32_t nServerSock, nClientSock;
 	uid_t tAcceptUID;
 	pid_t tChildPid;
+    pthread_t tACK_Thread;
+    pthread_attr_t tACK_ThreadAttr;
+    sem_t* pSem;
 
 	memset(tClientPid, 0, sizeof(tClientPid));
 
@@ -663,6 +719,15 @@ int32_t main(void) {
 	puts("!!!nRF905 Daemon start!!!"); /* prints !!!nRF905 Daemon start!!! */
 
 	NRF905D_LOG_INFO("nRF905 Daemon start...");
+
+    /* initialize semaphores for shared processes */
+	pSem = sem_open(NRF905_SERVER_SEMAPHORE, O_CREAT | O_EXCL, 0644, 1);
+	if (pSem == NULL){
+		NRF905D_LOG_ERR("Semaphore open failed.");
+		exit(-1);
+	}
+    /* name of semaphore is "pSem", semaphore is reached using this name */
+    sem_unlink (NRF905_SERVER_SEMAPHORE);
 
 	printf("Initialize GPIO.\n");
 	if (nInitNRF905GPIO() < 0){
@@ -703,7 +768,7 @@ int32_t main(void) {
 	}
 
 	pthread_attr_init(&tACK_ThreadAttr);
-	pthread_create(&tACK_Thread, &tACK_ThreadAttr, ackRoutine, (void *)(&nTaskPipeFD));
+	pthread_create(&tACK_Thread, &tACK_ThreadAttr, ackRoutine, NULL);
 
     /* Run until cancelled */
 	while (NRF905_FALSE == unNeedtoClose) {
@@ -718,7 +783,7 @@ int32_t main(void) {
 			NRF905D_LOG_ERR("Fork failed.");
 		}else if (0 == tChildPid){
 			// Child process
-			clientHandler(nClientSock, nRF905SPI_FD);
+			clientHandler(nClientSock, nRF905SPI_FD, pSem);
 		}else{
 			// Parent process
 			nRecordPid(tChildPid, tClientPid, MAX_CONNECTION_PENDING);
@@ -728,6 +793,7 @@ int32_t main(void) {
 	nKillAllChild(tClientPid, MAX_CONNECTION_PENDING);
 	pthread_join(tACK_Thread, NULL);
 	nWaitAllChild(tClientPid, MAX_CONNECTION_PENDING);
+	sem_destroy(pSem);
 	nDisableSPI_GPIO();
 	close(nRF905SPI_FD);
 	close(nServerSock);

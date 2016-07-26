@@ -33,7 +33,7 @@
 #define NRF905_TX_PAYLOAD_LEN			NRF905_RX_PAYLOAD_LEN
 
 #define NRF905_SERVER_NAME				"/var/tmp/nRF905LocalSocket"
-
+#define NRF905_SERVER_SEMAPHORE			"nRF905Sem"
 typedef enum _nRF905Boolean {
 	NRF905_FALSE = 0,
 	NRF905_TRUE = !NRF905_FALSE
