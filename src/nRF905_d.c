@@ -159,12 +159,10 @@ static int32_t nRF905_SPI_WR(int32_t nRF905SPIfd, uint8_t unCMD, uint8_t* pTX_Fr
 	return 0;
 }
 
-static uint8_t* nRF905_SPI_RD(int32_t nRF905SPIfd, uint8_t unCMD, uint8_t* pRX_Frame, uint8_t unFrameLength)
+static uint8_t* pRF905_SPI_RD(int32_t nRF905SPIfd, uint8_t unCMD, uint8_t unFrameLength)
 {
 	uint8_t unRF905_SPI_TX_Frame[NRF905_RX_PAYLOAD_LEN + 1];
-//	uint32_t unIndex;
 	static 	uint8_t unRF905_SPI_RX_Frame[NRF905_RX_PAYLOAD_LEN + 1];
-//	static uint8_t unRF905_SPI_RD_RX_Frame[NRF905_RX_PAYLOAD_LEN + 1];
 	struct spi_ioc_transfer tSPI_Transfer;
 
 	if (unFrameLength > NRF905_RX_PAYLOAD_LEN){
@@ -180,11 +178,7 @@ static uint8_t* nRF905_SPI_RD(int32_t nRF905SPIfd, uint8_t unCMD, uint8_t* pRX_F
 	memset(&tSPI_Transfer, 0, sizeof(struct spi_ioc_transfer));
 	unRF905_SPI_TX_Frame[0] = unCMD;
 	tSPI_Transfer.tx_buf = (unsigned long)unRF905_SPI_TX_Frame;
-	if (NULL == pRX_Frame){
-		tSPI_Transfer.rx_buf = (unsigned long)unRF905_SPI_RX_Frame;
-	}else{
-		tSPI_Transfer.rx_buf = (unsigned long)pRX_Frame;
-	}
+	tSPI_Transfer.rx_buf = (unsigned long)unRF905_SPI_RX_Frame;
 	tSPI_Transfer.len = unFrameLength + 1;
 	tSPI_Transfer.delay_usecs = unSPI_Delay;
 	tSPI_Transfer.speed_hz = unSPI_Speed;
@@ -195,15 +189,7 @@ static uint8_t* nRF905_SPI_RD(int32_t nRF905SPIfd, uint8_t unCMD, uint8_t* pRX_F
 		NRF905D_LOG_ERR("can't send spi message");
 		return NULL;
 	}
-	if (NULL == pRX_Frame){
-//		memcpy(unRF905_SPI_RD_RX_Frame, unRF905_SPI_RX_Frame, unFrameLength + 1);
-		return unRF905_SPI_RX_Frame;
-	}else{
-//		for (unIndex = 0; unIndex < unFrameLength; unIndex++){
-//			printf("0x%02X\n", pRX_Frame[unIndex]);
-//		}
-		return pRX_Frame;
-	}
+	return unRF905_SPI_RX_Frame;
 }
 
 static nRF905Boolean_t bIsCarrierDetected(void)
@@ -242,9 +228,9 @@ static int32_t nRF905CR_Initial(int32_t nRF905SPIfd)
 	}
 	printf("nRF905_SPI_WR OK in nRF905 CR initialization.\n");
 
-	pRXwStatus = nRF905_SPI_RD(nRF905SPIfd, NRF905_CMD_RC(0), NULL, ARRAY_SIZE(NRF905_CR_DEFAULT));
+	pRXwStatus = pRF905_SPI_RD(nRF905SPIfd, NRF905_CMD_RC(0), ARRAY_SIZE(NRF905_CR_DEFAULT));
 	if (NULL == pRXwStatus){
-		printf("nRF905_SPI_RD failed. \n");
+		printf("pRF905_SPI_RD failed. \n");
 		NRF905D_LOG_ERR("nRF905 control register initialization failed at nRF905 RX.");
 		return -1;
 	}
@@ -347,6 +333,8 @@ uint64_t getTimeDiffInUs(struct timeval tLastTime, struct timeval tCurrentTime)
 static int32_t nRF905ReceiveFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905CommTask)
 {
 	struct timeval tLastTime, tCurrentTime;
+	uint8_t* pSPI_ReadData;
+
 	if (NULL == tNRF905CommTask.pRX_Frame){
 		NRF905D_LOG_ERR("No place to save received frame.");
 		return (-1);
@@ -375,19 +363,20 @@ static int32_t nRF905ReceiveFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905
 
 //	printf("Data ready.\n");
 	// start SPI read RX payload from nRF905
-	if (nRF905_SPI_RD(nRF905SPI_Fd, NRF905_CMD_RRP, tNRF905CommTask.pRX_Frame, NRF905_RX_PAYLOAD_LEN) == NULL){
+	pSPI_ReadData = pRF905_SPI_RD(nRF905SPI_Fd, NRF905_CMD_RRP, NRF905_RX_PAYLOAD_LEN);
+	if (NULL == pSPI_ReadData){
 		NRF905D_LOG_ERR("Read RX payload from nRF905 failed.");
 		return (-1);
 	}
-
+	memcpy(tNRF905CommTask.pRX_Frame, pSPI_ReadData + 1, NRF905_RX_PAYLOAD_LEN);
 	return 0;
 }
 int32_t nRF905CheckReceivedFrame(nRF905CommTask_t tNRF905CommTask)
 {
-	printf("RF_READ_SENSOR_VALUE is %d and received frame is %u.\n", RF_READ_SENSOR_VALUE, tNRF905CommTask.pRX_Frame[1]);
-	switch (tNRF905CommTask.pTX_Frame[1]){
+	printf("pTX_Frame[0] is %d and received frame is %u.\n", tNRF905CommTask.pTX_Frame[0], tNRF905CommTask.pRX_Frame[0]);
+	switch (tNRF905CommTask.pTX_Frame[0]){
 	case RF_READ_SENSOR_VALUE:
-		if (RF_READ_SENSOR_VALUE == tNRF905CommTask.pRX_Frame[1]){
+		if (RF_READ_SENSOR_VALUE == tNRF905CommTask.pRX_Frame[0]){
 			return 0;
 		} else {
 			return (-1);
@@ -652,7 +641,7 @@ void clientHandler(int32_t nClientSock, int32_t nRF905SPI_FD, sem_t* pSem)
     }
     while (NRF905_FALSE == unNeedtoClose) {
     	tNRF905CommTask.pTX_Frame = unACK_Payload;
-		tNRF905CommTask.pRX_Frame = malloc(tNRF905CommTask.unCommByteNum + 1);
+		tNRF905CommTask.pRX_Frame = malloc(tNRF905CommTask.unCommByteNum);
 		if (NULL != tNRF905CommTask.pRX_Frame){
 			NRF905D_LOG_INFO("One ACK task was successfully gotten from socket.");
 			sem_wait(pSem);
