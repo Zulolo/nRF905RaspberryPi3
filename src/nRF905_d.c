@@ -382,13 +382,27 @@ static int32_t nRF905ReceiveFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905
 
 	return 0;
 }
+int32_t nRF905CheckReceivedFrame(nRF905CommTask_t tNRF905CommTask)
+{
+	printf("RF_READ_SENSOR_VALUE is %d and received frame is %u.\n", RF_READ_SENSOR_VALUE, tNRF905CommTask.pRX_Frame[1]);
+	switch (tNRF905CommTask.pTX_Frame[1]){
+	case RF_READ_SENSOR_VALUE:
+		if (RF_READ_SENSOR_VALUE == tNRF905CommTask.pRX_Frame[1]){
+			return 0;
+		} else {
+			return (-1);
+		}
+	default:
+		return (-1);
+	}
+}
 
 static int32_t nRF905SendFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905CommTask)
 {
 	struct timeval tLastTime, tCurrentTime;
-	uint32_t unIndex;
 	static uint32_t unSendOutFrame = 0;
 	static uint32_t unResponseFrame = 0;
+	int32_t unIndex;
 
 //	printf("nRF905 start send frame.\n");
 //	NRF905D_LOG_INFO("nRF905 start send frame.");
@@ -433,15 +447,16 @@ static int32_t nRF905SendFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905Com
 		for (unIndex = 0; unIndex < tNRF905CommTask.unCommByteNum; unIndex++){
 			printf("0x%02X\n", tNRF905CommTask.pRX_Frame[unIndex]);
 		}
-		if (memcmp(tNRF905CommTask.pTX_Frame, tNRF905CommTask.pRX_Frame + 1, tNRF905CommTask.unCommByteNum) != 0){
+		if (nRF905CheckReceivedFrame(tNRF905CommTask) < 0){
+			printf("Check received frame error.\n");
 			NRF905D_LOG_ERR("The received frame is different with sent one.");
 			return (-1);
 		}
 		unResponseFrame++;
-		printf("Total %u frame has been sent out. \nThe difference between send out and receive is:%d \n",
-				unSendOutFrame, unSendOutFrame - unResponseFrame);
+//		printf("Total %u frame has been sent out. \nThe difference between send out and receive is:%d \n",
+//				unSendOutFrame, unSendOutFrame - unResponseFrame);
 	}
-	printf("One frame was successfully sent out. \n");
+//	printf("One frame was successfully sent out. \n");
 	return 0;
 }
 
@@ -622,6 +637,7 @@ void clientHandler(int32_t nClientSock, int32_t nRF905SPI_FD, sem_t* pSem)
 	int32_t nReceivedCNT;
 	nRF905CommTask_t tNRF905CommTask;
 	uint8_t unACK_Payload[NRF905_TX_PAYLOAD_LEN];
+	int32_t nRslt;
 
     /* Receive message */
     if ((nReceivedCNT = recv(nClientSock, &tNRF905CommTask, sizeof(nRF905CommTask_t), 0)) < 0) {
@@ -638,10 +654,15 @@ void clientHandler(int32_t nClientSock, int32_t nRF905SPI_FD, sem_t* pSem)
     	tNRF905CommTask.pTX_Frame = unACK_Payload;
 		tNRF905CommTask.pRX_Frame = malloc(tNRF905CommTask.unCommByteNum + 1);
 		if (NULL != tNRF905CommTask.pRX_Frame){
-			NRF905D_LOG_INFO("One ACK task was successfully gotten from pipe.");
+			NRF905D_LOG_INFO("One ACK task was successfully gotten from socket.");
 			sem_wait(pSem);
-			nNRF905ExecuteTask(nRF905SPI_FD, tNRF905CommTask);
+			nRslt = nNRF905ExecuteTask(nRF905SPI_FD, tNRF905CommTask);
 			sem_post(pSem);
+			if (nRslt < 0){
+				// execute task error
+				tNRF905CommTask.pRX_Frame[0] = RF_CMD_FAILED;
+			}
+			send(nClientSock, tNRF905CommTask.pRX_Frame + 1, NRF905_RX_PAYLOAD_LEN, 0);
 			free(tNRF905CommTask.pRX_Frame);
 		}else{
 			NRF905D_LOG_ERR("WTF malloc fail??");
@@ -669,11 +690,10 @@ void clientHandler(int32_t nClientSock, int32_t nRF905SPI_FD, sem_t* pSem)
 void* ackRoutine(void* pArgu)
 {
 	nRF905CommTask_t tNRF905CommTask;
-	static uint8_t unACK_Payload[NRF905_TX_PAYLOAD_LEN] = {0xA5, 0xA5, 0xDC, 0xCD,
-			0x01, 0x02, 0x03, 0x04,
-			0x05, 0x06, 0x07, 0x08,
-			0x09, 0x0A, 0x0B, 0x0C};
+	static uint8_t unACK_TX_Payload[NRF905_TX_PAYLOAD_LEN] = {RF_READ_SENSOR_VALUE, 0x00, };
+	static uint8_t unACK_RX_Payload[NRF905_RX_PAYLOAD_LEN];
 	int32_t nConnectedSocketFd;
+	int32_t nReceivedCNT;
 
 	nConnectedSocketFd = nUnixSocketConn(NRF905_SERVER_NAME);
 	if(nConnectedSocketFd < 0)
@@ -686,9 +706,14 @@ void* ackRoutine(void* pArgu)
 	tNRF905CommTask.unCommByteNum = NRF905_TX_PAYLOAD_LEN;
 
 	while (NRF905_FALSE == unNeedtoClose){
-		if (nSendDataToNRF905Socket(nConnectedSocketFd, &tNRF905CommTask, unACK_Payload) < 0 ){
+		if (nSendDataToNRF905Socket(nConnectedSocketFd, &tNRF905CommTask, unACK_TX_Payload) < 0 ){
 			printf("Write task communication payload to pipe error with code:%d.", errno);
 			NRF905D_LOG_ERR("Write task communication payload to pipe error with code:%d.", errno);
+		} else {
+			if ((nReceivedCNT = recv(nConnectedSocketFd, unACK_RX_Payload, NRF905_RX_PAYLOAD_LEN, 0)) < 0) {
+				printf("Receive from unix domain socket error with code:%d.", errno);
+				NRF905D_LOG_ERR("Receive from unix domain socket error with code:%d.", errno);
+			}
 		}
 		usleep(ACK_TASK_INTERVAL_US);
 	}

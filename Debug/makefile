@@ -35,7 +35,7 @@ nRF905_d: $(OBJS) $(USER_OBJS)
 
 # Other Targets
 clean:
-	-$(RM) $(OBJS)$(C_DEPS)$(EXECUTABLES) nRF905_d
+	-$(RM) $(EXECUTABLES)$(OBJS)$(C_DEPS) nRF905_d
 	-@echo ' '
 
 .PHONY: all clean dependents

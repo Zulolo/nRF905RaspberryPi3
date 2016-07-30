@@ -39,6 +39,24 @@ typedef enum _nRF905Boolean {
 	NRF905_TRUE = !NRF905_FALSE
 }nRF905Boolean_t;
 
+typedef enum _RF_CMD {
+	RF_READ_SENSOR_VALUE = 0,
+	RF_WRITE_MOTOR_PAR,
+	RF_CMD_FAILED
+}RF_Command_t;
+
+typedef enum _nRF905CommType {
+	NRF905_COMM_TYPE_RX_PKG = 0,
+	NRF905_COMM_TYPE_TX_PKG
+}nRF905CommType_t;
+
+typedef struct _CommTask {
+	nRF905CommType_t tCommType;
+	uint8_t unCommByteNum;
+	uint8_t* pTX_Frame;
+	uint8_t* pRX_Frame;
+}nRF905CommTask_t;
+
 #ifdef __USED_NRF905_INTERNAL__
 
 	#include "GPIOcontrol.h"
@@ -108,17 +126,7 @@ typedef enum _nRF905Boolean {
 //		NRF905_STATE_RXING,
 //		NRF905_STATE_END
 //	}nRF905State_t;
-	typedef enum _nRF905CommType {
-		NRF905_COMM_TYPE_RX_PKG = 0,
-		NRF905_COMM_TYPE_TX_PKG
-	}nRF905CommType_t;
 
-	typedef struct _CommTask {
-		nRF905CommType_t tCommType;
-		uint8_t unCommByteNum;
-		uint8_t* pTX_Frame;
-		uint8_t* pRX_Frame;
-	}nRF905CommTask_t;
 	typedef struct _NRF905CommThreadPara{
 		int32_t nTaskReadPipe;
 		int32_t nBeforeIsRF905SPI_Fd_NowDoNotUse;
@@ -160,7 +168,7 @@ typedef enum _nRF905Boolean {
 	static uint8_t unSPI_Bits = 8;
 	static uint32_t unSPI_Speed = 5000000;
 	static uint16_t unSPI_Delay = 0;
-	static uint8_t unNeedtoClose = NRF905_FALSE;;
+	uint8_t unNeedtoClose = NRF905_FALSE;
 #else
 	#define __NRF905_EXTERN__			extern
 #endif
