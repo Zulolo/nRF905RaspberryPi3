@@ -104,7 +104,7 @@ typedef struct _CommTask {
 	#define MAX_CONNECTION_PENDING 					8    /* Max connection requests */
 	#define PID_EMPTY								0
 	#define RECEIVE_BUFFER_LENGTH					256
-	#define ACK_TASK_INTERVAL_US					100000
+	#define ACK_TASK_INTERVAL_US					5000000
 
 	typedef enum _nRF905Modes {
 		NRF905_MODE_PWR_DOWN = 0,

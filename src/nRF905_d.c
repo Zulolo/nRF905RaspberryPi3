@@ -648,12 +648,13 @@ void clientHandler(int32_t nClientSock, int32_t nRF905SPI_FD, sem_t* pSem)
 		if (NULL != tNRF905CommTask.pRX_Frame){
 			NRF905D_LOG_INFO("One ACK task was successfully gotten from socket.");
 			sem_wait(pSem);
-			nRslt = nNRF905ExecuteTask(nRF905SPI_FD, tNRF905CommTask);
+//			nRslt = nNRF905ExecuteTask(nRF905SPI_FD, tNRF905CommTask);
+			printf("nRF905 server %d received one message from socket %d.\n", getpid(), nClientSock);
 			sem_post(pSem);
-			if (nRslt < 0){
-				// execute task error
-				tNRF905CommTask.pRX_Frame[0] = RF_CMD_FAILED;
-			}
+//			if (nRslt < 0){
+//				// execute task error
+//				tNRF905CommTask.pRX_Frame[0] = RF_CMD_FAILED;
+//			}
 			send(nClientSock, tNRF905CommTask.pRX_Frame + 1, NRF905_RX_PAYLOAD_LEN, 0);
 			free(tNRF905CommTask.pRX_Frame);
 		}else{
@@ -706,6 +707,8 @@ void* ackRoutine(void* pArgu)
 			if ((nReceivedCNT = recv(nConnectedSocketFd, unACK_RX_Payload, NRF905_RX_PAYLOAD_LEN, 0)) < 0) {
 				// printf("Receive from unix domain socket error with code:%d.", errno);
 				NRF905D_LOG_ERR("Receive from unix domain socket error with code:%d.", errno);
+			}else{
+				printf("Socket %d received one message from nRF905 server.\n", nConnectedSocketFd);
 			}
 		}
 		usleep(ACK_TASK_INTERVAL_US);
@@ -785,8 +788,8 @@ int32_t main(void) {
 		exit(-1);
 	}
 
-	pthread_attr_init(&tACK_ThreadAttr);
-	pthread_create(&tACK_Thread, &tACK_ThreadAttr, ackRoutine, NULL);
+//	pthread_attr_init(&tACK_ThreadAttr);
+//	pthread_create(&tACK_Thread, &tACK_ThreadAttr, ackRoutine, NULL);
 
     /* Run until cancelled */
 	while (NRF905_FALSE == unNeedtoClose) {
@@ -810,7 +813,7 @@ int32_t main(void) {
 	}
 
 	nKillAllChild(tClientPid, MAX_CONNECTION_PENDING);
-	pthread_join(tACK_Thread, NULL);
+//	pthread_join(tACK_Thread, NULL);
 	nWaitAllChild(tClientPid, MAX_CONNECTION_PENDING);
 	sem_destroy(pSem);
 	nDisableSPI_GPIO();
