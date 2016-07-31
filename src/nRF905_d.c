@@ -339,7 +339,7 @@ static int32_t nRF905ReceiveFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905
 		NRF905D_LOG_ERR("No place to save received frame.");
 		return (-1);
 	}
-//	printf("nRF905 start receive frame.\n");
+	printf("nRF905 start receive frame.\n");
 	// Start listen
 	setNRF905Mode(NRF905_MODE_BURST_RX);
 
@@ -361,14 +361,15 @@ static int32_t nRF905ReceiveFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905
 		return (-1);
 	}
 
-//	printf("Data ready.\n");
+	printf("Data ready.\n");
 	// start SPI read RX payload from nRF905
 	pSPI_ReadData = pRF905_SPI_RD(nRF905SPI_Fd, NRF905_CMD_RRP, NRF905_RX_PAYLOAD_LEN);
 	if (NULL == pSPI_ReadData){
+		printf("Read RX payload from nRF905 failed.\n");
 		NRF905D_LOG_ERR("Read RX payload from nRF905 failed.");
 		return (-1);
 	}
-	memcpy(tNRF905CommTask.pRX_Frame, pSPI_ReadData + 1, NRF905_RX_PAYLOAD_LEN);
+
 	return 0;
 }
 int32_t nRF905CheckReceivedFrame(nRF905CommTask_t tNRF905CommTask)
@@ -389,8 +390,8 @@ int32_t nRF905CheckReceivedFrame(nRF905CommTask_t tNRF905CommTask)
 static int32_t nRF905SendFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905CommTask)
 {
 	struct timeval tLastTime, tCurrentTime;
-	static uint32_t unSendOutFrame = 0;
-	static uint32_t unResponseFrame = 0;
+//	static uint32_t unSendOutFrame = 0;
+//	static uint32_t unResponseFrame = 0;
 	int32_t unIndex;
 
 //	printf("nRF905 start send frame.\n");
@@ -422,11 +423,11 @@ static int32_t nRF905SendFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905Com
 		}
 		// sleep a while to make sure data has been sent out and no reflect return to receive
 		setNRF905Mode(NRF905_MODE_STD_BY);
-		unSendOutFrame++;
+//		unSendOutFrame++;
 
 		// start to read response
 		if (nRF905ReceiveFrame(nRF905SPI_Fd, tNRF905CommTask) < 0){
-//			printf("Data receive failed.\n");
+			printf("Data receive failed.\n");
 			NRF905D_LOG_ERR("Data receive failed.");
 			return (-1);
 		}
@@ -441,7 +442,7 @@ static int32_t nRF905SendFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905Com
 			NRF905D_LOG_ERR("The received frame is different with sent one.");
 			return (-1);
 		}
-		unResponseFrame++;
+//		unResponseFrame++;
 //		printf("Total %u frame has been sent out. \nThe difference between send out and receive is:%d \n",
 //				unSendOutFrame, unSendOutFrame - unResponseFrame);
 	}
