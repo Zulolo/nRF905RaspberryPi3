@@ -97,7 +97,7 @@ typedef struct _CommTask {
 
 	#define AFTER_SET_BURST_TX_MAX_DELAY_US			30000
 //	#define AFTER_SET_BURST_RX_MAX_CD_DELAY_US		50000
-	#define AFTER_CD_MAX_AM_DELAY_US				100000	// Since there maybe interference in tha air, the CD may be set very soon
+	#define AFTER_RX_MODE_MAX_DR_DELAY_US			80000	// Since there maybe interference in tha air, the CD may be set very soon
 //	#define AFTER_AM_MAX_DR_DELAY_US				80000
 
 	#define NRF905_MAX_COMM_ERR_BEFORE_HOPPING		20
