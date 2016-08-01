@@ -739,6 +739,8 @@ int32_t main(void) {
 
 	puts("!!!nRF905 Daemon start!!!"); /* prints !!!nRF905 Daemon start!!! */
 
+	puts("!!!Try new Ubuntu!!!");
+
 	NRF905D_LOG_INFO("nRF905 Daemon start...");
 
     /* initialize semaphores for shared processes */
