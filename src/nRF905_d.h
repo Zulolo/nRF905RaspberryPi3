@@ -32,7 +32,8 @@
 #define NRF905_RX_PAYLOAD_LEN			16
 #define NRF905_TX_PAYLOAD_LEN			NRF905_RX_PAYLOAD_LEN
 
-#define NRF905_SERVER_NAME				"/var/tmp/nRF905LocalSocket"
+#define NRF905_SERVER_PORT				905
+#define LOCAL_HOST_IP					"127.0.0.1"
 #define NRF905_SERVER_SEMAPHORE			"nRF905Sem"
 typedef enum _nRF905Boolean {
 	NRF905_FALSE = 0,

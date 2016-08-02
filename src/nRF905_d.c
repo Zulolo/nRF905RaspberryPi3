@@ -25,8 +25,8 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/socket.h>
-#include <sys/un.h>
-#include <stddef.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include <linux/types.h>
 #include <linux/spi/spidev.h>
 
@@ -518,102 +518,74 @@ static int32_t nNRF905ExecuteTask(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905
 	}
 }
 
-int32_t nUnixSocketListen(const char *pNRF905ServerName)
+int32_t nTCPSocketListen(uint16_t unNRF905ServerPort)
 {
-	int32_t nLocalSocketFd;
-	struct sockaddr_un tSocketAddrUn;
-	int32_t nLen;
-	if ((nLocalSocketFd = socket(AF_UNIX, SOCK_STREAM, 0)) < 0){
-		NRF905D_LOG_ERR("Create AF_UNIX socket failed with error %d.", errno);
+	int32_t nServerSocket;
+	struct sockaddr_in tServerSocketAddr;
+
+    /* Create the TCP socket */
+    if ((nServerSocket = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0) {
+		NRF905D_LOG_ERR("Failed to create socket.");
 		return (-1);
-	}
-	unlink(pNRF905ServerName);               /* in case it already exists */
-	memset(&tSocketAddrUn, 0, sizeof(tSocketAddrUn));
-	tSocketAddrUn.sun_family = AF_UNIX;
-	strcpy(tSocketAddrUn.sun_path, pNRF905ServerName);
-	nLen = offsetof(struct sockaddr_un, sun_path) + strlen(pNRF905ServerName);
-	/* bind the name to the descriptor */
-	if (bind(nLocalSocketFd, (struct sockaddr *)&tSocketAddrUn, nLen) < 0){
-		close(nLocalSocketFd);
-		NRF905D_LOG_ERR("Bind local socket failed with error %d.", errno);
+    }
+    /* Construct the server sockaddr_in structure */
+    memset(&tServerSocketAddr, 0, sizeof(tServerSocketAddr));       /* Clear struct */
+    tServerSocketAddr.sin_family = AF_INET;                  /* Internet/IP */
+    tServerSocketAddr.sin_addr.s_addr = htonl(INADDR_ANY);   /* Incoming addr */
+    tServerSocketAddr.sin_port = unNRF905ServerPort;       /* server port */
+
+    /* Bind the server socket */
+    if (bind(nServerSocket, (struct sockaddr *)&tServerSocketAddr, sizeof(tServerSocketAddr)) < 0) {
+    	close(nServerSocket);
+		NRF905D_LOG_ERR("Failed to bind the server socket with error %d.", errno);
 		return (-1);
-	}else{
-		if (listen(nLocalSocketFd, MAX_CONNECTION_PENDING) < 0){
-			close(nLocalSocketFd);
-			NRF905D_LOG_ERR("Listen local socket failed with error %d.", errno);
-			return (-1);
-		}else{
-			return nLocalSocketFd;
-		}
-	}
+    }
+    /* Listen on the server socket */
+    if (listen(nServerSocket, MAX_CONNECTION_PENDING) < 0) {
+    	close(nServerSocket);
+		NRF905D_LOG_ERR("Failed to listen on server socket with error %d.", errno);
+		return (-1);
+    }
+
+	return nServerSocket;
 }
 
-int32_t nUnixSocketAccept(int32_t nServerSocket, uid_t* pAcceptUID)
+int32_t nTCPSocketAccept(int32_t nServerSocket)
 {
-	int32_t nClientFd;
-	socklen_t nLeng;
-	struct sockaddr_un tSocketAddrUn;
-	struct stat tStatBuf;
-	nLeng = sizeof(tSocketAddrUn);
-
-	if ((nClientFd = accept(nServerSocket, (struct sockaddr *)(&tSocketAddrUn), &nLeng)) < 0){
+	int32_t nClientSocket;
+	struct sockaddr_in tClientSocketAddr;
+	uint32_t nClientlen = sizeof(tClientSocketAddr);
+    if ((nClientSocket = accept(nServerSocket, (struct sockaddr *)&tClientSocketAddr, &nClientlen)) < 0) {
+		NRF905D_LOG_ERR("Failed to accept client connection with error %d.", errno);
 		return (-1);
-	}
-	/* obtain the client's uid from its calling address */
-	nLeng -= offsetof(struct sockaddr_un, sun_path);  /* len of pathname */
-	tSocketAddrUn.sun_path[nLeng] = 0; /* null terminate */
-	if (stat(tSocketAddrUn.sun_path, &tStatBuf) < 0){
-		close(nClientFd);
-		NRF905D_LOG_ERR("Stat local socket failed with error %d.", errno);
-		return (-1);
-	}else{
-		if (S_ISSOCK(tStatBuf.st_mode)){
-			if (pAcceptUID != NULL){
-				*pAcceptUID = tStatBuf.st_uid;    /* return uid of caller */
-			}
-			unlink(tSocketAddrUn.sun_path);       /* we're done with pathname now */
-			return nClientFd;
-		}else{
-			close(nClientFd);
-			NRF905D_LOG_ERR("S_ISSOCK local socket failed with error %d.", errno);
-			return (-1);
-		}
-	}
+    }
+    return nClientSocket;
 }
 
 /* Create a client endpoint32_t and connect to a server.   Returns fd if all OK, <0 on error. */
-int32_t nUnixSocketConn(const char *pNRF905ServerName)
+int32_t nTCPSocketConn(const char* pServerIPAddr, uint16_t unServerPort)
 {
-	int32_t nConnectSocketFd;
-	int32_t nLen;
-	struct sockaddr_un tSocketAddrUn;
+	int32_t nConnectSocket;
+	struct sockaddr_in tConnSocketAddr;
 
-	if ((nConnectSocketFd = socket(AF_UNIX, SOCK_STREAM, 0)) < 0){     /* create a UNIX domain stream socket */
+    if ((nConnectSocket = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0) {
+    	NRF905D_LOG_ERR("Failed to create socket with error %d.", errno);
 		return(-1);
-	}
-	memset(&tSocketAddrUn, 0, sizeof(tSocketAddrUn));            /* fill socket address structure with our address */
-	tSocketAddrUn.sun_family = AF_UNIX;
-	sprintf(tSocketAddrUn.sun_path, "scktmp%05d", getpid());
-	nLen = offsetof(struct sockaddr_un, sun_path) + strlen(tSocketAddrUn.sun_path);
-	unlink(tSocketAddrUn.sun_path);               /* in case it already exists */
-	if (bind(nConnectSocketFd, (struct sockaddr *)&tSocketAddrUn, nLen) < 0) {
-		close(nConnectSocketFd);
-		NRF905D_LOG_ERR("Bind socket failed during client connect with error %d.", errno);
-		return (-1);
-	}else{
-		/* fill socket address structure with server's address */
-		memset(&tSocketAddrUn, 0, sizeof(tSocketAddrUn));
-		tSocketAddrUn.sun_family = AF_UNIX;
-		strcpy(tSocketAddrUn.sun_path, pNRF905ServerName);
-		nLen = offsetof(struct sockaddr_un, sun_path) + strlen(pNRF905ServerName);
-		if (connect(nConnectSocketFd, (struct sockaddr *)&tSocketAddrUn, nLen) < 0)   {
-			close(nConnectSocketFd);
-			NRF905D_LOG_ERR("Connect server failed with error %d.", errno);
-			return (-1);
-		}else{
-			return (nConnectSocketFd);
-		}
-	}
+    }
+
+    /* Construct the server sockaddr_in structure */
+    memset(&tConnSocketAddr, 0, sizeof(tConnSocketAddr));       /* Clear struct */
+    tConnSocketAddr.sin_family = AF_INET;                  /* Internet/IP */
+    tConnSocketAddr.sin_addr.s_addr = inet_addr(pServerIPAddr);  /* IP address */
+    tConnSocketAddr.sin_port = unServerPort;       /* server port */
+    /* Establish connection */
+    if (connect(nConnectSocket, (struct sockaddr *) &tConnSocketAddr, sizeof(tConnSocketAddr)) < 0) {
+    	close(nConnectSocket);
+    	NRF905D_LOG_ERR("Failed to connect with server with error %d.", errno);
+		return(-1);
+    }
+
+    return nConnectSocket;
 }
 
 int32_t nSendDataToNRF905Socket(int32_t nConnectedSocketFD, nRF905CommTask_t* pNRF905CommTask, uint8_t* pACK_Payload)
@@ -648,13 +620,13 @@ void clientHandler(int32_t nClientSock, int32_t nRF905SPI_FD, sem_t* pSem)
 		if (NULL != tNRF905CommTask.pRX_Frame){
 			NRF905D_LOG_INFO("One ACK task was successfully gotten from socket.");
 			sem_wait(pSem);
-//			nRslt = nNRF905ExecuteTask(nRF905SPI_FD, tNRF905CommTask);
+			nRslt = nNRF905ExecuteTask(nRF905SPI_FD, tNRF905CommTask);
 			printf("nRF905 server %d received one message from socket %d.\n", getpid(), nClientSock);
 			sem_post(pSem);
-//			if (nRslt < 0){
-//				// execute task error
-//				tNRF905CommTask.pRX_Frame[0] = RF_CMD_FAILED;
-//			}
+			if (nRslt < 0){
+				// execute task error
+				tNRF905CommTask.pRX_Frame[0] = RF_CMD_FAILED;
+			}
 			send(nClientSock, tNRF905CommTask.pRX_Frame + 1, NRF905_RX_PAYLOAD_LEN, 0);
 			free(tNRF905CommTask.pRX_Frame);
 		}else{
@@ -689,7 +661,7 @@ void* ackRoutine(void* pArgu)
 	int32_t nReceivedCNT;
 
 	sleep(2);
-	nConnectedSocketFd = nUnixSocketConn(NRF905_SERVER_NAME);
+	nConnectedSocketFd = nTCPSocketConn(LOCAL_HOST_IP, NRF905_SERVER_PORT);
 	if(nConnectedSocketFd < 0)
 	{
 		// printf("Error[%d] when connecting...", errno);
@@ -721,7 +693,6 @@ int32_t main(void) {
 	int32_t nRF905SPI_FD;
 	struct sigaction tSignalINT_Action, tSignalCHLD_Action;
 	int32_t nServerSock, nClientSock;
-	uid_t tAcceptUID;
 	pid_t tChildPid;
     pthread_t tACK_Thread;
     pthread_attr_t tACK_ThreadAttr;
@@ -782,7 +753,7 @@ int32_t main(void) {
 	}
 
 	// printf("Initialize local socket.\n");
-	nServerSock = nUnixSocketListen(NRF905_SERVER_NAME);
+	nServerSock = nTCPSocketListen(NRF905_SERVER_PORT);
 	if(nServerSock < 0){
 		close(nRF905SPI_FD);
 		nDisableSPI_GPIO();
@@ -790,18 +761,18 @@ int32_t main(void) {
 		exit(-1);
 	}
 
-//	pthread_attr_init(&tACK_ThreadAttr);
-//	pthread_create(&tACK_Thread, &tACK_ThreadAttr, ackRoutine, NULL);
+	pthread_attr_init(&tACK_ThreadAttr);
+	pthread_create(&tACK_Thread, &tACK_ThreadAttr, ackRoutine, NULL);
 
     /* Run until cancelled */
 	while (NRF905_FALSE == unNeedtoClose) {
 		/* Wait for client connection */
-		nClientSock = nUnixSocketAccept(nServerSock, &tAcceptUID);
+		nClientSock = nTCPSocketAccept(nServerSock);
 		if(nClientSock < 0){
 			NRF905D_LOG_ERR("Error[%d] when accepting...\n",errno);
 			break;
 		}
-		printf("New socket %d was connected in.\n",nClientSock );
+		printf("New socket %d was connected in.\n", nClientSock);
 		tChildPid = fork();
 		if (tChildPid < 0){
 			NRF905D_LOG_ERR("Fork failed.");
@@ -815,7 +786,7 @@ int32_t main(void) {
 	}
 
 	nKillAllChild(tClientPid, MAX_CONNECTION_PENDING);
-//	pthread_join(tACK_Thread, NULL);
+	pthread_join(tACK_Thread, NULL);
 	nWaitAllChild(tClientPid, MAX_CONNECTION_PENDING);
 	sem_destroy(pSem);
 	nDisableSPI_GPIO();
