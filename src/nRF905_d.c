@@ -235,7 +235,7 @@ static int32_t nRF905CR_Initial(int32_t nRF905SPIfd)
 		return -1;
 	}
 	for (unIndex = 0; unIndex < ARRAY_SIZE(NRF905_CR_DEFAULT) + 1; unIndex++){
-		// printf("0x%02X\n", pRXwStatus[unIndex]);
+		printf("0x%02X\n", pRXwStatus[unIndex]);
 	}
 	if (memcmp(pRXwStatus + 1, NRF905_CR_DEFAULT, ARRAY_SIZE(NRF905_CR_DEFAULT)) != 0){
 		NRF905D_LOG_ERR("nRF905 control register initialization failed at comparing CR value.");
@@ -334,6 +334,7 @@ static int32_t nRF905ReceiveFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905
 {
 	struct timeval tLastTime, tCurrentTime;
 	uint8_t* pSPI_ReadData;
+//	uint32_t unIndex;
 
 	if (NULL == tNRF905CommTask.pRX_Frame){
 		NRF905D_LOG_ERR("No place to save received frame.");
@@ -347,8 +348,8 @@ static int32_t nRF905ReceiveFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905
 	gettimeofday(&tLastTime, NULL);
 	gettimeofday(&tCurrentTime, NULL);
 	while (getTimeDiffInUs(tLastTime, tCurrentTime) < AFTER_RX_MODE_MAX_DR_DELAY_US){
-		if ((bIsCarrierDetected() == NRF905_TRUE) &&
-				(bIsAddressMatch() == NRF905_TRUE) &&
+		if (//(bIsCarrierDetected() == NRF905_TRUE) &&
+			//	(bIsAddressMatch() == NRF905_TRUE) &&
 				(bIsDataReady() == NRF905_TRUE)){
 			break;
 		}
@@ -370,8 +371,12 @@ static int32_t nRF905ReceiveFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905
 		NRF905D_LOG_ERR("Read RX payload from nRF905 failed.");
 		return (-1);
 	}
+//	NRF905D_LOG_INFO("----==== !!! Data received !!! ====----");
 	memcpy(tNRF905CommTask.pRX_Frame, pSPI_ReadData + 1, tNRF905CommTask.unCommByteNum);
-
+//	printf("Frame received from nRF905 is: \n");
+//	for (unIndex = 0; unIndex < 17; unIndex++){
+//		printf("0x%02X\n", pSPI_ReadData[unIndex]);
+//	}
 	return 0;
 }
 int32_t nRF905CheckReceivedFrame(nRF905CommTask_t tNRF905CommTask)
@@ -394,7 +399,7 @@ static int32_t nRF905SendFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905Com
 	struct timeval tLastTime, tCurrentTime;
 //	static uint32_t unSendOutFrame = 0;
 //	static uint32_t unResponseFrame = 0;
-	int32_t unIndex;
+//	int32_t unIndex;
 
 //	// printf("nRF905 start send frame.\n");
 //	NRF905D_LOG_INFO("nRF905 start send frame.");
@@ -436,9 +441,9 @@ static int32_t nRF905SendFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905Com
 		// If receive OK, frame was saved in the tNRF905CommTask.pRX_Frame
 		setNRF905Mode(NRF905_MODE_STD_BY);
 
-		for (unIndex = 0; unIndex < tNRF905CommTask.unCommByteNum; unIndex++){
-			// printf("0x%02X\n", tNRF905CommTask.pRX_Frame[unIndex]);
-		}
+//		for (unIndex = 0; unIndex < tNRF905CommTask.unCommByteNum; unIndex++){
+//			printf("0x%02X\n", tNRF905CommTask.pRX_Frame[unIndex]);
+//		}
 		if (nRF905CheckReceivedFrame(tNRF905CommTask) < 0){
 			// printf("Check received frame error.\n");
 			NRF905D_LOG_ERR("The received frame is different with sent one.");
@@ -461,7 +466,7 @@ static int32_t nRF905Hopping(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905CommT
 	// printf("Hopping procedure start.\n");
 	NRF905D_LOG_INFO("Hopping procedure start.");
 
-	for (unTX_RetryCNT = 0; unTX_RetryCNT < HOPPING_MAX_RETRY_NUM; unTX_RetryCNT++){
+	for (unTX_RetryCNT = 0; (unTX_RetryCNT < HOPPING_MAX_RETRY_NUM) && (NRF905_FALSE == unNeedtoClose); unTX_RetryCNT++){
 		if (unNeedtoClose != NRF905_FALSE){
 			break;
 		}
@@ -618,16 +623,16 @@ void clientHandler(int32_t nClientSock, int32_t nRF905SPI_FD, sem_t* pSem)
     	tNRF905CommTask.pTX_Frame = unACK_Payload;
 		tNRF905CommTask.pRX_Frame = malloc(tNRF905CommTask.unCommByteNum);
 		if (NULL != tNRF905CommTask.pRX_Frame){
-			NRF905D_LOG_INFO("One ACK task was successfully gotten from socket.");
+//			NRF905D_LOG_INFO("One ACK task was successfully gotten from socket.");
 			sem_wait(pSem);
 			nRslt = nNRF905ExecuteTask(nRF905SPI_FD, tNRF905CommTask);
-			printf("nRF905 server %d received one message from socket %d.\n", getpid(), nClientSock);
+//			printf("nRF905 server %d received one message from socket %d.\n", getpid(), nClientSock);
 			sem_post(pSem);
 			if (nRslt < 0){
 				// execute task error
 				tNRF905CommTask.pRX_Frame[0] = RF_CMD_FAILED;
 			}
-			send(nClientSock, tNRF905CommTask.pRX_Frame + 1, NRF905_RX_PAYLOAD_LEN, 0);
+			send(nClientSock, tNRF905CommTask.pRX_Frame, NRF905_RX_PAYLOAD_LEN, 0);
 			free(tNRF905CommTask.pRX_Frame);
 		}else{
 			NRF905D_LOG_ERR("WTF malloc fail??");
@@ -659,6 +664,7 @@ void* ackRoutine(void* pArgu)
 	static uint8_t unACK_RX_Payload[NRF905_RX_PAYLOAD_LEN];
 	int32_t nConnectedSocketFd;
 	int32_t nReceivedCNT;
+//	uint32_t unIndex;
 
 	sleep(2);
 	nConnectedSocketFd = nTCPSocketConn(LOCAL_HOST_IP, NRF905_SERVER_PORT);
@@ -680,7 +686,10 @@ void* ackRoutine(void* pArgu)
 				// printf("Receive from unix domain socket error with code:%d.", errno);
 				NRF905D_LOG_ERR("Receive from unix domain socket error with code:%d.", errno);
 			}else{
-				printf("Socket %d received one message from nRF905 server.\n", nConnectedSocketFd);
+//				printf("Socket %d received one message from nRF905 server.\n", nConnectedSocketFd);
+//				for (unIndex = 0; unIndex < ARRAY_SIZE(unACK_RX_Payload); unIndex++){
+//					printf("0x%02X\n", unACK_RX_Payload[unIndex]);
+//				}
 			}
 		}
 		usleep(ACK_TASK_INTERVAL_US);

@@ -18,11 +18,11 @@
 #define NRF905_AM_PIN					23
 #define NRF905_DR_PIN					24
 
-#define NRF905D_LOG_ERR(arg...)			openlog("nRF905.D", LOG_PID, 0);\
-										syslog(LOG_USER | LOG_ERR, arg);\
+#define NRF905D_LOG_ERR(arg...)			openlog("nRF905.D.err", LOG_PID, 0);\
+										syslog(LOG_USER | LOG_INFO, arg);\
 										closelog()
 
-#define NRF905D_LOG_INFO(arg...)		openlog("nRF905.D", LOG_PID, 0);\
+#define NRF905D_LOG_INFO(arg...)		openlog("nRF905.D.info", LOG_PID, 0);\
 										syslog(LOG_USER | LOG_INFO, arg);\
 										closelog()
 
@@ -105,7 +105,7 @@ typedef struct _CommTask {
 	#define MAX_CONNECTION_PENDING 					8    /* Max connection requests */
 	#define PID_EMPTY								0
 	#define RECEIVE_BUFFER_LENGTH					256
-	#define ACK_TASK_INTERVAL_US					5000000
+	#define ACK_TASK_INTERVAL_US					100000
 
 	typedef enum _nRF905Modes {
 		NRF905_MODE_PWR_DOWN = 0,
