@@ -88,6 +88,7 @@ void sigCHLD_Handler(int32_t signum, siginfo_t *info, void *ptr)
 	pid_t tChildPid;
 	tChildPid = waitpid(-1, NULL, WNOHANG);
 	if (tChildPid > 0){
+		printf("Child %d exit.\n", tChildPid);
 		nClearPid(tChildPid, tClientPid, MAX_CONNECTION_PENDING);
 	}
 }
@@ -441,6 +442,7 @@ static int32_t nRF905SendFrame(int32_t nRF905SPI_Fd, nRF905CommTask_t tNRF905Com
 		// If receive OK, frame was saved in the tNRF905CommTask.pRX_Frame
 		setNRF905Mode(NRF905_MODE_STD_BY);
 
+//		printf("One frame was successfully received from remote. \n");
 //		for (unIndex = 0; unIndex < tNRF905CommTask.unCommByteNum; unIndex++){
 //			printf("0x%02X\n", tNRF905CommTask.pRX_Frame[unIndex]);
 //		}
@@ -609,12 +611,12 @@ void clientHandler(int32_t nClientSock, int32_t nRF905SPI_FD, sem_t* pSem)
 	int32_t nRslt;
 
     /* Receive message */
-    if ((nReceivedCNT = recv(nClientSock, &tNRF905CommTask, sizeof(nRF905CommTask_t), 0)) < 0) {
+    if ((nReceivedCNT = recv(nClientSock, &tNRF905CommTask, sizeof(nRF905CommTask_t), 0)) <= 0) {
     	NRF905D_LOG_ERR("Failed to receive task data from client with code:%d.", errno);
     	close(nClientSock);
     	exit(-1);
     }
-    if ((nReceivedCNT = recv(nClientSock, unACK_Payload, NRF905_TX_PAYLOAD_LEN, 0)) < 0) {
+    if ((nReceivedCNT = recv(nClientSock, unACK_Payload, NRF905_TX_PAYLOAD_LEN, 0)) <= 0) {
     	NRF905D_LOG_ERR("Failed to receive payload data from client with code:%d.", errno);
     	close(nClientSock);
     	exit(-1);
@@ -641,12 +643,12 @@ void clientHandler(int32_t nClientSock, int32_t nRF905SPI_FD, sem_t* pSem)
 		}
 
         /* Receive message */
-        if ((nReceivedCNT = recv(nClientSock, &tNRF905CommTask, sizeof(nRF905CommTask_t), 0)) < 0) {
+        if ((nReceivedCNT = recv(nClientSock, &tNRF905CommTask, sizeof(nRF905CommTask_t), 0)) <= 0) {
         	NRF905D_LOG_ERR("Failed to receive task data from client with error %d.", errno);
         	close(nClientSock);
         	exit(-1);
         }
-        if ((nReceivedCNT = recv(nClientSock, unACK_Payload, NRF905_TX_PAYLOAD_LEN, 0)) < 0) {
+        if ((nReceivedCNT = recv(nClientSock, unACK_Payload, NRF905_TX_PAYLOAD_LEN, 0)) <= 0) {
         	NRF905D_LOG_ERR("Failed to receive payload data from client with error %d.", errno);
         	close(nClientSock);
         	exit(-1);
@@ -779,7 +781,7 @@ int32_t main(void) {
 		nClientSock = nTCPSocketAccept(nServerSock);
 		if(nClientSock < 0){
 			NRF905D_LOG_ERR("Error[%d] when accepting...\n",errno);
-			break;
+			continue;
 		}
 		printf("New socket %d was connected in.\n", nClientSock);
 		tChildPid = fork();
@@ -795,8 +797,11 @@ int32_t main(void) {
 	}
 
 	nKillAllChild(tClientPid, MAX_CONNECTION_PENDING);
+	printf("Kill signal has been sent to all children.\n");
 	pthread_join(tACK_Thread, NULL);
+	printf("Acknowledge thread has quit.\n");
 	nWaitAllChild(tClientPid, MAX_CONNECTION_PENDING);
+	printf("All children have been killed.\n");
 	sem_destroy(pSem);
 	nDisableSPI_GPIO();
 	close(nRF905SPI_FD);

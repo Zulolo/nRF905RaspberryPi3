@@ -58,13 +58,14 @@ typedef struct _CommTask {
 	uint8_t* pRX_Frame;
 }nRF905CommTask_t;
 
+#define ARRAY_SIZE(a) 						(sizeof(a) / sizeof((a)[0]))
+
 #ifdef __USED_NRF905_INTERNAL__
 
 	#include "GPIOcontrol.h"
 
 	#define __NRF905_EXTERN__
 	#define NRF905_DATA_FIFO_FOLDER_PATH		"/var/tmp/"
-	#define ARRAY_SIZE(a) 						(sizeof(a) / sizeof((a)[0]))
 	#define NRF905_SPI_DEVICE					"/dev/spidev0.0"
 
 	/* Here is how the RF works:
@@ -105,7 +106,7 @@ typedef struct _CommTask {
 	#define MAX_CONNECTION_PENDING 					8    /* Max connection requests */
 	#define PID_EMPTY								0
 	#define RECEIVE_BUFFER_LENGTH					256
-	#define ACK_TASK_INTERVAL_US					100000
+	#define ACK_TASK_INTERVAL_US					200000
 
 	typedef enum _nRF905Modes {
 		NRF905_MODE_PWR_DOWN = 0,
