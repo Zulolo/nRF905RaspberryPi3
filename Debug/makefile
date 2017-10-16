@@ -23,22 +23,21 @@ endif
 # Add inputs and outputs from these tool invocations to the build variables 
 
 # All Target
-all: nRF905_d
+all: nRF905RaspberryPi3
 
 # Tool invocations
-nRF905_d: $(OBJS) $(USER_OBJS)
+nRF905RaspberryPi3: $(OBJS) $(USER_OBJS)
 	@echo 'Building target: $@'
 	@echo 'Invoking: Cross GCC Linker'
-	arm-linux-gnueabihf-gcc  -o "nRF905_d" $(OBJS) $(USER_OBJS) $(LIBS)
+	arm-linux-gnueabihf-gcc  -o "nRF905RaspberryPi3" $(OBJS) $(USER_OBJS) $(LIBS)
 	@echo 'Finished building target: $@'
 	@echo ' '
 
 # Other Targets
 clean:
-	-$(RM) $(EXECUTABLES)$(OBJS)$(C_DEPS) nRF905_d
+	-$(RM) $(EXECUTABLES)$(OBJS)$(C_DEPS) nRF905RaspberryPi3
 	-@echo ' '
 
 .PHONY: all clean dependents
-.SECONDARY:
 
 -include ../makefile.targets
